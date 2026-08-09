@@ -1058,9 +1058,13 @@ async def health(request: Request) -> JSONResponse:
 
     try:
         await request.app.state.llm_provider.ping()
-        checks["ollama"] = "ok"
+        checks["ollama_model"] = "ok"
     except Exception as exc:  # noqa: BLE001
-        checks["ollama"] = f"error: {exc}"
+        checks["ollama_model"] = f"error: {exc}"
+
+    required_state = ("embedding_provider", "reranker")
+    missing_state = [name for name in required_state if not hasattr(request.app.state, name)]
+    checks["local_models"] = "ok" if not missing_state else f"error: not loaded: {', '.join(missing_state)}"
 
     all_ok = all(v == "ok" for v in checks.values())
     status_code = 200 if all_ok else 503

@@ -13,24 +13,17 @@ Qdrant 하이브리드 검색과 Ollama LLM으로 근거 기반 답변을 생성
 - PyMuPDF + PaddleOCR/PPStructureV3
 - extraction → chunking → embedding 독립 워커
 
-## 일반 실행 방식: 앱은 로컬, 인프라는 Docker
+## 설치와 실행
 
-```powershell
-cd C:\path\to\rag_chatbot_project
-Copy-Item .env.example .env
+최초 한 번 `SETUP_RAG.cmd`, 평상시에는 `RUN_RAG.cmd`를 실행한다.
 
-# app 서비스에는 profile이 있어 기본 실행에서 제외된다.
-docker compose up -d
-
-# 반드시 Python 3.11 가상환경에서 실행
-python -m pip install -r requirements.txt
-python -m pip install -r app\services\table_extraction\requirements.txt
-python -m alembic upgrade head
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```text
+SETUP_RAG.cmd   # 외부 venv + Docker 인프라 + 모델 검사 + Alembic
+RUN_RAG.cmd     # 재설치 없이 상태 검사 후 로컬 Uvicorn 실행
 ```
 
 브라우저 주소는 `http://127.0.0.1:8000`이다. OCR 캐시가 프로젝트 안에서 변경되므로 문서 처리 중에는
-`--reload`를 사용하지 않는다.
+`--reload`를 사용하지 않는다. 새 PC 복원은 `docs/FINAL_RUN_GUIDE.md`를 따른다.
 
 앱까지 Docker로 실행할 때만 다음 프로필을 켠다.
 

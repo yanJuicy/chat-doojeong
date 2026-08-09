@@ -13,4 +13,5 @@ uploaded_files/
 .claude/settings.local.json
 *.zip
 backups/
-
+releases/
+wheelhouse/

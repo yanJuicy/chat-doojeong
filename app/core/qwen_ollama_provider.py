@@ -15,6 +15,28 @@ from .llm_provider import BaseLLMProvider
 logger = logging.getLogger(__name__)
 
 
+def _normalize_ollama_model_name(name: str) -> str:
+    """Ollama 모델명을 비교 가능한 ``name:tag`` 형태로 정규화한다."""
+    normalized = name.strip().lower().split("@", 1)[0]
+    if normalized and ":" not in normalized.rsplit("/", 1)[-1]:
+        normalized = f"{normalized}:latest"
+    return normalized
+
+
+def ollama_model_is_available(payload: dict, requested_model: str) -> bool:
+    """``/api/tags`` 응답에 설정된 모델이 실제로 설치되어 있는지 확인한다."""
+    requested = _normalize_ollama_model_name(requested_model)
+    available: set[str] = set()
+    for item in payload.get("models", []):
+        if not isinstance(item, dict):
+            continue
+        for key in ("name", "model"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                available.add(_normalize_ollama_model_name(value))
+    return requested in available
+
+
 class QwenOllamaProvider(BaseLLMProvider):
     """Ollama에 로컬 서빙된 Qwen2.5를 호출하는 LLM Provider"""
 
@@ -66,10 +88,15 @@ class QwenOllamaProvider(BaseLLMProvider):
                         break
 
     async def ping(self) -> None:
-        """Ollama 서버가 응답하는지만 확인한다 (/health용). 모델을 로드하지 않는 가벼운 호출."""
+        """Ollama 서버와 설정된 LLM 모델의 설치 상태를 함께 확인한다."""
         async with httpx.AsyncClient(base_url=self._base_url, timeout=5.0) as client:
             response = await client.get("/api/tags")
             response.raise_for_status()
+            if not ollama_model_is_available(response.json(), self._model):
+                raise RuntimeError(
+                    f"Ollama 모델이 설치되어 있지 않습니다: {self._model}. "
+                    f"`docker compose exec ollama ollama pull {self._model}`을 실행하세요."
+                )
 
     async def unload(self) -> None:
         """메타데이터 생성 뒤 Ollama 모델을 내려 다음 GPU 단계에 VRAM을 양보한다."""
