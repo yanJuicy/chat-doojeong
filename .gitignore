@@ -1,0 +1,15 @@
+.env
+.env.*.backup
+venv/
+venv_*/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+models/
+uploaded_files/
+*.log
+.mcp.json
+.claude/settings.local.json
+*.zip
+

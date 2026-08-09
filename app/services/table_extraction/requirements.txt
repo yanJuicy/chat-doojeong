@@ -1,0 +1,11 @@
+# 표 추출 모듈 의존성
+# 폐쇄망 반입 시 아래 패키지들의 wheel 파일을 사전에 다운로드해서 내부 PyPI 미러 또는
+# 로컬 인덱스로 설치할 것을 권장합니다.
+
+paddlepaddle==3.2.2        # 현재 Windows CPU 환경에서 실제 검증된 버전
+paddleocr>=3.7,<4.0
+beautifulsoup4>=4.12.0
+pillow>=10.0.0
+pydantic>=2.0.0
+numpy>=1.24,<2.4           # paddlex 3.7.x 요구사항과 충돌 방지
+ujson>=5.9.0

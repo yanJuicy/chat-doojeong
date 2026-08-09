@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG 챗봇 — 개발용 콘솔</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --border: #dfe3ea;
+    --text: #1c2333;
+    --text-muted: #6b7280;
+    --accent: #4753d8;
+    --accent-hover: #3a45c2;
+    --success: #1f8a70;
+    --warning: #b8860b;
+    --danger: #c0392b;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Pretendard", sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  header h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  header p {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  main {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    min-width: 0; /* 그리드 자식 기본값(min-width:auto) 때문에 긴 파일명 등이 옆 칸을 밀어내는 것 방지 */
+    overflow-wrap: break-word;
+  }
+  .card h2 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .card .desc {
+    margin: 0 0 16px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  textarea, input[type="text"] {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    background: #fbfbfd;
+  }
+  textarea:focus, input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    margin-top: 10px;
+    padding: 9px 16px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { background: #b8bccb; cursor: not-allowed; }
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  button.secondary:hover { background: #eef0fd; }
+
+  .answer-box {
+    margin-top: 14px;
+    padding: 14px;
+    background: #fbfbfd;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    white-space: pre-wrap;
+    min-height: 40px;
+  }
+  .meta {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+
+  .file-drop {
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    cursor: pointer;
+    overflow-wrap: break-word;
+  }
+  .file-drop:hover { border-color: var(--accent); }
+  .file-drop.has-file { border-style: solid; color: var(--text); }
+
+  .doc-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; max-height: 230px; overflow-y: auto; padding-right: 4px; }
+  .doc-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: #fbfbfd;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12.5px;
+  }
+  .doc-name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+  .status-pill {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  .status-uploaded { background: #eef0fd; color: var(--accent); }
+  .status-extracted, .status-chunked, .status-extracting { background: #fff6e0; color: var(--warning); }
+  .status-needs_review { background: #fff0d8; color: #9a5b00; border: 1px solid #e2ad52; }
+  .status-ready { background: #e5f5f1; color: var(--success); }
+  .status-failed { background: #fbeae8; color: var(--danger); }
+  .status-duplicate { background: #f0f1f6; color: var(--text-muted); }
+
+  .spinner {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid #d8dbe6;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin-right: 6px;
+    vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RAG 챗봇 — 개발용 콘솔</h1>
+  <p>curl/PowerShell 없이 브라우저에서 바로 질문하고 문서를 넣어보는 확인용 화면입니다.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>질문하기</h2>
+    <p class="desc">문서를 넣은 뒤 질문하면 검색→리랭킹→답변 생성까지 실행됩니다.</p>
+    <textarea id="question" rows="3" placeholder="예: 이 문서 내용을 요약해줘"></textarea>
+    <button id="askBtn" onclick="askQuestion()">질문 보내기</button>
+    <div id="answerBox" class="answer-box" style="display:none;"></div>
+    <div id="answerMeta" class="meta"></div>
+    <div id="answerImages" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:10px;"></div>
+    <div id="answerSources" style="margin-top:10px;"></div>
+    <div id="answerDiagnostics" style="margin-top:10px; display:none; padding:10px; background:#f7f8fa; border-radius:6px; font-size:11.5px;"></div>
+    <div id="answerTimings" style="margin-top:10px; display:none; padding:10px; background:#f7f8fa; border-radius:6px; font-size:11.5px;"></div>
+  </section>
+
+  <section class="card">
+    <h2>문서 넣기</h2>
+    <p class="desc">PDF / Word(.docx) / 텍스트(.txt, .md) 파일을 업로드하면 자동으로 추출→청킹→임베딩까지 진행됩니다.</p>
+    <div class="file-drop" id="fileDrop" onclick="document.getElementById('fileInput').click()" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onFileDrop(event)">
+      파일을 선택하거나 여기로 끌어다 놓으세요 (여러 개/zip 다 가능)
+    </div>
+    <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md,.html,.htm,.jpg,.jpeg,.png,.zip" multiple style="display:none;" onchange="onFileSelected()">
+    <div id="perFileLabelList" style="margin-top:8px; border:1px solid var(--border); border-radius:6px; max-height:220px; overflow-y:auto; user-select:none;"></div>
+    <div style="display:flex; gap:8px; align-items:flex-start; margin-top:8px;">
+      <div style="position:relative; flex:1;">
+        <input type="text" id="groupLabelInput" placeholder="선택한 파일에 적용할 라벨 (예: 두정테크 - 용접사업)" autocomplete="off"
+               oninput="onGroupLabelInput()" onkeydown="onGroupLabelKeydown(event)" style="width:100%; box-sizing:border-box;">
+        <div id="groupLabelSuggestions" style="position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid var(--border); border-radius:6px; z-index:10; display:none; max-height:160px; overflow-y:auto;"></div>
+      </div>
+      <button class="secondary" onclick="applyGroupLabel()" style="flex:0 0 auto;">선택 파일에 적용</button>
+    </div>
+    <p class="desc" style="margin-top:4px;">아래 목록에서 파일을 클릭(Ctrl+클릭으로 여러 개) 또는 드래그로 선택한 뒤, 라벨을 입력하고 "선택 파일에 적용"을 누르세요. 라벨을 안 준 파일은 파일명을 그대로 씁니다. 콤마(,)로 구분해서 여러 라벨을 한 번에 넣을 수도 있어요 (예: "두정테크, 용접방식"). (zip은 안에 파일이 여러 개라 개별 지정이 안 돼요 — 필요하면 압축 안 하고 낱개로 올려주세요.)</p>
+    <button id="uploadBtn" onclick="uploadFile()" disabled>업로드 및 처리 시작</button>
+    <div id="docListCount" class="meta" style="margin-top:10px;"></div>
+    <div class="doc-list" id="docList"></div>
+  </section>
+
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>청크 보기 (청킹 품질 확인)</h2>
+    <p class="desc">문서 하나를 골라 청크가 어떻게 쪼개졌는지 순서대로 확인합니다. 너무 짧거나(⚠짧음) 긴(⚠김) 청크는 표시됩니다.</p>
+    <select id="chunkDocSelect" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;"></select>
+    <button onclick="loadChunks()">청크 불러오기</button>
+    <div id="chunkList" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;"></div>
+  </section>
+
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>정확도·속도 비교 도구</h2>
+    <p class="desc">실제 질문 여러 개를 지금 설정 그대로 파이프라인에 태워서, 실측 유사도·(정답 파일명을 알려주면) 적중 여부·단계별 소요시간을 표로 보여줍니다. 설정(.env)을 바꾼 뒤 다시 실행해서 A/B로 저장하면 전/후를 나란히 비교할 수 있어요.</p>
+    <p class="desc" style="margin-top:-8px;">한 줄에 질문 하나씩. 정답 파일이 있으면 <code>질문 | 파일명일부</code> 형식으로 (파일명은 몰라도 됨).</p>
+    <textarea id="evalQuestions" rows="5" placeholder="재정동향 4월호에서 통화신용정책 관련 수치는? | 재정동향&#10;교육부 2024년 정책 핵심 내용은? | 교육부"></textarea>
+    <button onclick="runEvaluation('A')">실행 → A로 저장</button>
+    <button class="secondary" onclick="runEvaluation('B')">실행 → B로 저장</button>
+    <div id="evalNote" class="meta"></div>
+    <div id="evalResults" style="margin-top:12px; display:grid; grid-template-columns: 1fr 1fr; gap:14px;"></div>
+  </section>
+</main>
+
+<script>
+async function refreshDocumentOptions() {
+  try {
+    const res = await fetch('/api/documents');
+    const docs = await res.json();
+    const select = document.getElementById('chunkDocSelect');
+    select.innerHTML = docs.map(d => `<option value="${d.document_id}">${d.filename} (${d.status})</option>`).join('');
+    // 백엔드는 최신순(newest-first)으로 준다. 순번을 오래된 것부터 매겨야 실제 최신 문서가
+    // 가장 큰 _order를 받아서(=목록 맨 위) 정렬이 맞는다.
+    for (const d of docs.slice().reverse()) {
+      upsertDocument(d.document_id, {
+        filename: d.filename,
+        status: d.status,
+        warning: d.warning_message,
+        labels: d.labels || [],
+        extractionQuality: d.extraction_quality_score,
+        extractionMethod: d.extraction_method
+      });
+    }
+    renderDocList();
+  } catch (err) { /* 문서 목록 조회 실패는 조용히 무시 (콘솔 첫 진입 시 흔함) */ }
+}
+window.addEventListener('DOMContentLoaded', refreshDocumentOptions);
+
+function parseMarkdownTableToHtml(text) {
+  const lines = text.trim().split('\n').filter(l => l.trim().startsWith('|'));
+  const rows = lines
+    .filter(l => !/^\|[\s:|-]+\|$/.test(l.trim()))  // 구분선(|---|---|) 제외
+    .map(l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()));
+  if (!rows.length) return `<div style="font-size:12px; white-space:pre-wrap;">${text}</div>`;
+
+  const [header, ...body] = rows;
+  const escape = s => s.replace(/</g, '&lt;');
+  return `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <thead><tr>${header.map(h => `<th style="border:1px solid var(--border); padding:4px 6px; background:#f0f1f6; text-align:left;">${escape(h)}</th>`).join('')}</tr></thead>
+    <tbody>${body.map(row => `<tr>${row.map(cell => `<td style="border:1px solid var(--border); padding:4px 6px;">${escape(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+  </table>`;
+}
+
+const CHUNK_TYPE_LABEL = { text: '텍스트', table: '표', image: '이미지' };
+const CHUNK_TYPE_PILL_CLASS = { text: 'status-uploaded', table: 'status-chunked', image: 'status-ready' };
+
+async function loadChunks() {
+  const documentId = document.getElementById('chunkDocSelect').value;
+  const list = document.getElementById('chunkList');
+  if (!documentId) { list.innerHTML = '<p class="desc">먼저 문서를 선택하세요.</p>'; return; }
+  list.innerHTML = '<span class="spinner"></span>불러오는 중...';
+
+  try {
+    const res = await fetch(`/api/documents/${documentId}/chunks`);
+    const data = await res.json();
+    if (!data.items.length) { list.innerHTML = '<p class="desc">청크가 없습니다 (아직 처리 전이거나 실패한 문서일 수 있음).</p>'; return; }
+
+    const s = data.summary;
+    const summaryHtml = `<div class="meta" style="margin-bottom:10px;">총 ${s.total}개 청크 — 텍스트 ${s.text}개 · 표 ${s.table}개 · 이미지 ${s.image}개</div>`;
+
+    const itemsHtml = data.items.map((c, i) => {
+      let flag = `<span class="status-pill ${CHUNK_TYPE_PILL_CLASS[c.chunk_type]}">${CHUNK_TYPE_LABEL[c.chunk_type]}</span>`;
+      if (c.chunk_type === 'text' && c.is_short) flag += ' <span class="status-pill status-failed">⚠ 짧음</span>';
+      if (c.chunk_type === 'text' && c.is_long) flag += ' <span class="status-pill status-failed">⚠ 김</span>';
+      if (c.chunk_type === 'table' && c.table_confidence !== null && c.table_confidence !== undefined) {
+        const pct = (c.table_confidence * 100).toFixed(0);
+        const cls = c.table_confidence >= 0.99 ? 'status-ready' : (c.table_confidence >= 0.7 ? 'status-extracted' : 'status-failed');
+        flag += ` <span class="status-pill ${cls}">구조 일관성 ${pct}%</span>`;
+      }
+
+      let body;
+      if (c.chunk_type === 'table') {
+        body = parseMarkdownTableToHtml(c.text);
+      } else if (c.chunk_type === 'image') {
+        body = `<div style="display:flex; gap:10px; align-items:flex-start;">
+          <img src="${c.image_url}" style="width:120px; border:1px solid var(--border); border-radius:6px;">
+          <div style="font-size:13px;">${c.text}</div>
+        </div>`;
+      } else {
+        body = `<div style="font-size:13px; white-space:pre-wrap;">${c.text.length > 300 ? c.text.slice(0, 300) + '...' : c.text}</div>`;
+      }
+
+      return `
+        <div style="padding:10px; border:1px solid var(--border); border-radius:6px; background:#fbfbfd;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span class="meta">#${i + 1} · ${c.length}자${c.page_number ? ' · p.' + c.page_number : ''}</span>
+            ${flag}
+          </div>
+          ${body}
+        </div>`;
+    }).join('');
+
+    list.innerHTML = summaryHtml + itemsHtml;
+  } catch (err) {
+    list.innerHTML = '오류: ' + err.message;
+  }
+}
+</script>
+
+<script>
+const documents = {}; // document_id -> {filename, status, _order}
+let docOrderCounter = 1000000; // 새로 추가되는 문서가 항상 이전 것보다 큰 순번을 받도록 크게 시작
+
+function upsertDocument(id, patch) {
+  if (!documents[id]) {
+    documents[id] = { _order: docOrderCounter++ };
+  }
+  Object.assign(documents[id], patch);
+}
+
+function renderChatResult(data) {
+  const box = document.getElementById('answerBox');
+  const meta = document.getElementById('answerMeta');
+  const imagesBox = document.getElementById('answerImages');
+  const diag = document.getElementById('answerDiagnostics');
+
+  box.textContent = data.answer;
+  meta.textContent = `language=${data.question_language}  ·  context_chunks=${data.n_context_chunks}` + (data.cache_hit ? '  ·  🗄 캐시 응답' : '');
+
+  imagesBox.innerHTML = '';
+  if (data.images && data.images.length) {
+    imagesBox.innerHTML = data.images.map(img => `
+      <div style="width:160px;">
+        <img src="${img.image_url}" style="width:100%; border:1px solid var(--border); border-radius:6px; display:block;">
+        <div class="meta" style="margin-top:4px; white-space:normal;">${img.caption}</div>
+      </div>`).join('');
+  }
+
+  const sourcesBox = document.getElementById('answerSources');
+  sourcesBox.innerHTML = '';
+  if (data.sources && data.sources.length) {
+    const items = data.sources.map(s => {
+      const pageText = s.page_number ? ` · p.${s.page_number}` : '';
+      return `<span class="source-chip" data-doc-id="${s.document_id}" data-filename="${s.filename.replace(/"/g, '&quot;')}"
+                style="display:inline-flex; align-items:center; gap:5px; padding:4px 10px; margin:0 6px 6px 0; border:1px solid var(--border); border-radius:14px; font-size:12px; cursor:pointer; background:#f7f8fa;">
+                📄 ${s.filename}${pageText} <span class="meta">${(s.similarity * 100).toFixed(0)}%</span>
+              </span>`;
+    }).join('');
+    sourcesBox.innerHTML = `<div class="meta" style="margin-bottom:4px;">출처 (클릭하면 원본을 엽니다)</div><div>${items}</div>`;
+    sourcesBox.querySelectorAll('.source-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        openFileViewer(chip.dataset.docId, chip.dataset.filename);
+      });
+    });
+  }
+
+  // 진단 정보 — 결론만이 아니라 항상 실제 유사율 수치를 같이 보여준다
+  const intentLine = (data.intent_scores || [])
+    .map(s => `${s.category} ${(s.similarity * 100).toFixed(1)}%`)
+    .join(' · ');
+  const cacheLine = data.cache_similarity !== null
+    ? `가장 가까운 과거 질문과의 유사도 ${(data.cache_similarity * 100).toFixed(1)}%${data.cache_hit ? ' (완전 일치, 답변 재사용됨)' : ' (완전히 같은 질문이 아니라 새로 생성)'}`
+    : '캐시된 과거 질문 없음';
+
+  diag.style.display = 'block';
+  diag.innerHTML = `
+    <div><b>의도 분류</b>: ${intentLine || '해당 없음'}</div>
+    <div style="margin-top:4px;"><b>질문 캐시</b>: ${cacheLine}</div>
+  `;
+}
+
+function renderTimings(timings, opts) {
+  opts = opts || {};
+  const box = document.getElementById('answerTimings');
+  if (!timings.length) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const total = timings.reduce((sum, t) => sum + t.seconds, 0);
+  const rows = timings.map(t => `<div style="display:flex; justify-content:space-between;"><span>${t.stage}</span><span class="meta">${t.seconds.toFixed(2)}초</span></div>`).join('');
+  const errorLine = opts.errorStage
+    ? `<div style="margin-top:6px; color:var(--danger); font-weight:600;">⚠ "${opts.errorStage}" 단계에서 오류 발생: ${opts.errorMessage}</div>`
+    : '';
+  box.innerHTML = `<div style="font-weight:600; margin-bottom:4px;">단계별 소요시간</div>${rows}<div style="display:flex; justify-content:space-between; margin-top:4px; padding-top:4px; border-top:1px solid var(--border); font-weight:600;"><span>합계</span><span>${total.toFixed(2)}초</span></div>${errorLine}`;
+}
+
+async function askQuestion() {
+  const question = document.getElementById('question').value.trim();
+  if (!question) return;
+
+  const btn = document.getElementById('askBtn');
+  const box = document.getElementById('answerBox');
+  const meta = document.getElementById('answerMeta');
+  const imagesBox = document.getElementById('answerImages');
+  const diag = document.getElementById('answerDiagnostics');
+  const timingsBox = document.getElementById('answerTimings');
+  btn.disabled = true;
+  box.style.display = 'block';
+  box.innerHTML = '<span class="spinner"></span>연결 중...';
+  meta.textContent = '';
+  imagesBox.innerHTML = '';
+  diag.style.display = 'none';
+  diag.innerHTML = '';
+  timingsBox.style.display = 'none';
+  timingsBox.innerHTML = '';
+
+  const collectedTimings = [];
+
+  // SSE로 진행상황을 실시간으로 받는다 (질문 임베딩 -> 캐시확인 -> 의도분류 -> 검색 -> 리랭킹 -> LLM생성 -> 환각검증 순서)
+  const es = new EventSource(`/api/chat/stream?question=${encodeURIComponent(question)}`);
+
+  let streamedAnswer = '';
+
+  es.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.stage === 'done') {
+      es.close();
+      btn.disabled = false;
+      renderChatResult(data.result);
+      renderTimings(data.result.stage_timings && data.result.stage_timings.length ? data.result.stage_timings : collectedTimings);
+    } else if (data.stage === 'error') {
+      es.close();
+      btn.disabled = false;
+      box.textContent = `오류: "${data.error.stage}" 단계에서 실패했습니다 — ${data.error.message}`;
+      renderTimings(data.error.stage_timings || collectedTimings, { errorStage: data.error.stage, errorMessage: data.error.message });
+    } else if (data.timing) {
+      collectedTimings.push(data.timing);
+      renderTimings(collectedTimings);
+    } else if (data.token !== undefined) {
+      // LLM이 토큰을 만드는 대로 바로바로 화면에 이어붙인다 (전체 계산시간은 그대로지만 체감 대기시간이 크게 줄어듦)
+      streamedAnswer += data.token;
+      box.textContent = streamedAnswer;
+    } else {
+      streamedAnswer = '';
+      box.innerHTML = `<span class="spinner"></span>${data.stage}`;
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    btn.disabled = false;
+    if (box.innerHTML.includes('spinner')) {
+      box.textContent = '오류: 서버와의 연결이 끊겼습니다. 다시 시도해주세요.';
+      renderTimings(collectedTimings);
+    }
+  };
+}
+
+let selectedFiles = [];
+let fileLabels = {};             // fileIndex -> 사용자가 지정한 라벨
+let checkedFileIndices = new Set();
+let isDragSelecting = false;
+let dragSelectValue = true;      // 드래그 시작 시 체크할지(true) 해제할지(false)
+
+function applySelectedFiles(files) {
+  selectedFiles = Array.from(files || []);
+  fileLabels = {};
+  checkedFileIndices = new Set();
+  const drop = document.getElementById('fileDrop');
+  const uploadBtn = document.getElementById('uploadBtn');
+
+  if (selectedFiles.length) {
+    drop.textContent = selectedFiles.length === 1
+      ? `선택됨: ${selectedFiles[0].name}`
+      : `선택됨: ${selectedFiles.length}개 파일`;
+    drop.classList.add('has-file');
+    uploadBtn.disabled = false;
+  }
+  renderPerFileList();
+}
+
+function renderPerFileList() {
+  const box = document.getElementById('perFileLabelList');
+  if (!selectedFiles.length) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = selectedFiles.map((file, i) => {
+    const isZip = file.name.toLowerCase().endsWith('.zip');
+    const checked = checkedFileIndices.has(i);
+    const labels = fileLabels[i] || [];
+    const rowStyle = `display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border); ${isZip ? 'opacity:0.5;' : 'cursor:pointer;'} ${checked ? 'background:#eef0fd;' : ''}`;
+    const handlers = isZip ? '' : `onmousedown="onFileRowMouseDown(event, ${i})" onmouseenter="onFileRowMouseEnter(event, ${i})"`;
+    const checkbox = isZip ? '📦' : `<input type="checkbox" ${checked ? 'checked' : ''} style="pointer-events:none;">`;
+    const labelTag = labels.length
+      ? `<span class="meta" style="font-size:11px; white-space:nowrap; max-width:200px; overflow:hidden; text-overflow:ellipsis;" title="${labels.join(', ')}">${labels.join(', ')}</span>`
+      : (isZip ? '<span class="meta" style="font-size:11px;">개별지정 불가</span>' : '');
+    return `<div class="file-row" style="${rowStyle}" ${handlers}>
+      ${checkbox}
+      <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px;" title="${file.name}">${file.name}</span>
+      ${labelTag}
+    </div>`;
+  }).join('');
+}
+
+function onFileRowMouseDown(event, i) {
+  event.preventDefault();
+  isDragSelecting = true;
+  // Ctrl/Cmd 없이 클릭하면 새로 선택 시작(기존 선택 해제), 누르고 있으면 기존 선택에 추가/토글
+  if (!event.ctrlKey && !event.metaKey) {
+    checkedFileIndices.clear();
+  }
+  dragSelectValue = !checkedFileIndices.has(i);
+  if (dragSelectValue) checkedFileIndices.add(i); else checkedFileIndices.delete(i);
+  renderPerFileList();
+}
+
+function onFileRowMouseEnter(event, i) {
+  if (!isDragSelecting) return;
+  if (dragSelectValue) checkedFileIndices.add(i); else checkedFileIndices.delete(i);
+  renderPerFileList();
+}
+
+document.addEventListener('mouseup', () => { isDragSelecting = false; });
+
+function applyGroupLabel() {
+  const input = document.getElementById('groupLabelInput');
+  // "두정테크, 용접방식, 로봇종류등"처럼 콤마로 여러 개를 한 번에 적용할 수 있게 한다. 이게 안전한 이유:
+  // 선택된 파일 "전체"가 이 라벨들을 똑같이 다 받는 거라 - "어느 파일이 어느 라벨"이라는 모호함이
+  // 없다 (그런 모호함이 있는 건 서로 다른 파일에 서로 다른 라벨을 배정하려는 경우인데, 그건
+  // 지금처럼 선택-적용을 따로 하시면 됨).
+  // 각 조각 끝에 흔히 붙는 "등"/"등등"만 정규식으로 가볍게 떼어낸다 (형태소분석처럼 문법을 판단해서
+  // 아무 데나 자르는 게 아니라, "글자 맨 끝에 붙어있을 때만" 지우는 좁고 예측 가능한 규칙이라 안전함).
+  const newLabels = input.value
+    .split(',')
+    .map(s => s.trim().replace(/등등?$/, '').trim())
+    .filter(Boolean);
+  if (!newLabels.length || checkedFileIndices.size === 0) return;
+  checkedFileIndices.forEach(i => {
+    if (!fileLabels[i]) fileLabels[i] = [];
+    newLabels.forEach(label => {
+      if (!fileLabels[i].includes(label)) fileLabels[i].push(label);  // 같은 라벨 중복 추가 방지
+    });
+  });
+  input.value = '';
+  document.getElementById('groupLabelSuggestions').style.display = 'none';
+  // 선택은 그대로 유지한다 - 같은 파일 묶음에 라벨을 더 추가하고 싶을 수 있어서(예: 콤마로 안 쓰고
+  // 자동완성으로 하나씩 검색해서 넣고 싶을 때), 매번 다시 드래그/클릭 안 해도 되게.
+  renderPerFileList();
+}
+
+function onFileSelected() {
+  const input = document.getElementById('fileInput');
+  applySelectedFiles(input.files);
+}
+
+function onDragOver(event) {
+  event.preventDefault();
+  document.getElementById('fileDrop').style.borderColor = 'var(--accent)';
+}
+
+function onDragLeave(event) {
+  event.preventDefault();
+  document.getElementById('fileDrop').style.borderColor = '';
+}
+
+function onFileDrop(event) {
+  event.preventDefault();
+  document.getElementById('fileDrop').style.borderColor = '';
+  applySelectedFiles(event.dataTransfer.files);
+}
+
+// --- 라벨 자동완성 (그룹 라벨 입력창 하나에 대해서만 동작) ---
+let groupLabelDebounceTimer = null;
+let lastGroupSuggestions = [];
+
+async function onGroupLabelInput() {
+  clearTimeout(groupLabelDebounceTimer);
+  const query = document.getElementById('groupLabelInput').value.trim();
+  // 디바운스: 타이핑 도중마다 요청 안 보내고, 잠깐 멈췄을 때만 검색
+  groupLabelDebounceTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/document-labels/search?q=${encodeURIComponent(query)}`);
+      const labels = await res.json();
+      lastGroupSuggestions = labels;
+      renderGroupLabelSuggestions(labels);
+    } catch (err) {
+      // 자동완성 실패는 조용히 무시 (직접 타이핑은 여전히 가능해야 하므로)
+    }
+  }, 150);
+}
+
+function renderGroupLabelSuggestions(labels) {
+  const box = document.getElementById('groupLabelSuggestions');
+  if (!labels.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  // 강조(가장 먼저 선택될) 후보는 리스트가 입력창 "아래"에 뜨므로 맨 위에 오도록 배치
+  box.innerHTML = labels.map((label, idx) => `
+    <div class="label-suggestion" data-idx="${idx}" style="padding:6px 10px; cursor:pointer; border-bottom:1px solid var(--border); font-size:12px; ${idx === 0 ? 'background:#eef0fd;' : ''}"
+         onmousedown="selectGroupLabel('${label.replace(/'/g, "\\'")}')">${label}</div>
+  `).join('');
+  box.style.display = 'block';
+}
+
+function selectGroupLabel(label) {
+  document.getElementById('groupLabelInput').value = label;
+  document.getElementById('groupLabelSuggestions').style.display = 'none';
+  lastGroupSuggestions = [];
+}
+
+function onGroupLabelKeydown(event) {
+  if (event.key !== 'Enter') return;
+  // 자동완성 후보가 떠 있으면(=입력창과 가장 가까운, 리스트 맨 위) 그걸 선택. 후보가 없으면
+  // 새로 입력한 걸 그대로 신규 라벨로 받아들인다 (별도 확인 없이 - IDE 자동완성과 동일한 동작).
+  if (lastGroupSuggestions.length) {
+    event.preventDefault();
+    selectGroupLabel(lastGroupSuggestions[0]);
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#groupLabelInput') && !e.target.closest('#groupLabelSuggestions')) {
+    document.getElementById('groupLabelSuggestions').style.display = 'none';
+  }
+});
+
+async function uploadOneFile(file, fileIndex) {
+  const isZip = file.name.toLowerCase().endsWith('.zip');
+  const formData = new FormData();
+  formData.append('file', file);
+  if (!isZip) {
+    const labels = fileLabels[fileIndex] || [];
+    labels.forEach(label => formData.append('labels', label));
+  }
+  const endpoint = isZip ? '/api/documents/upload-zip' : '/api/documents/upload';
+  const res = await fetch(endpoint, { method: 'POST', body: formData });
+  const data = await res.json();
+  if (!res.ok) throw new Error(`${file.name}: ${data.detail || '업로드 실패'}`);
+  return { isZip, data, filename: file.name };
+}
+
+async function uploadFile() {
+  if (!selectedFiles.length) return;
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+
+  const allSkipped = [];
+  const allDuplicates = [];
+  const toPoll = [];
+
+  try {
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      btn.textContent = `업로드 중... (${i + 1}/${selectedFiles.length})`;
+
+      const { isZip, data } = await uploadOneFile(file, i);
+
+      if (isZip) {
+        for (const item of data.created) {
+          upsertDocument(item.document_id, { filename: item.filename, status: item.is_duplicate ? 'duplicate' : 'uploaded' });
+          if (item.is_duplicate) allDuplicates.push(item.filename); else toPoll.push(item.document_id);
+        }
+        if (data.skipped && data.skipped.length) allSkipped.push(...data.skipped);
+      } else {
+        upsertDocument(data.document_id, { filename: file.name, status: data.status });
+        if (data.is_duplicate) allDuplicates.push(file.name); else toPoll.push(data.document_id);
+      }
+    }
+
+    renderDocList();
+
+    // 지원 안 하는 파일이 섞여 있어도, 정상 등록된 문서 처리에는 전혀 영향 없음 (완전히 독립적으로 처리됨)
+    let msg = `${toPoll.length}개 문서 등록됨`;
+    if (allDuplicates.length) msg += ` / 이미 있던 파일이라 건너뜀: ${allDuplicates.join(', ')}`;
+    if (allSkipped.length) msg += ` / 지원 안 하는 형식이라 건너뜀: ${allSkipped.join(', ')}`;
+    if (allDuplicates.length || allSkipped.length) alert(msg);
+
+    if (toPoll.length) {
+      await fetch('/api/admin/run-workers', { method: 'POST' });
+      for (const documentId of toPoll) pollStatus(documentId);
+    }
+  } catch (err) {
+    alert('오류: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '업로드 및 처리 시작';
+    selectedFiles = [];
+    fileLabels = {};
+    checkedFileIndices = new Set();
+    document.getElementById('fileDrop').textContent = '파일을 선택하거나 여기로 끌어다 놓으세요 (여러 개/zip 다 가능)';
+    document.getElementById('fileDrop').classList.remove('has-file');
+    document.getElementById('perFileLabelList').innerHTML = '';
+  }
+}
+
+async function retryDocument(documentId) {
+  try {
+    const res = await fetch(`/api/documents/${documentId}/retry`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '재시도 요청 실패');
+    upsertDocument(documentId, { status: data.status, warning: null });
+    renderDocList();
+    await fetch('/api/admin/run-workers', { method: 'POST' });
+    pollStatus(documentId);
+  } catch (err) {
+    alert('재시도 실패: ' + err.message);
+  }
+}
+
+async function pollStatus(documentId) {
+  const res = await fetch(`/api/documents/${documentId}/status`);
+  if (!res.ok) return;
+  const data = await res.json();
+  documents[documentId].status = data.status;
+  documents[documentId].warning = data.warning_message;
+  documents[documentId].category = data.category;
+  documents[documentId].categorySimilarity = data.category_similarity;
+  documents[documentId].currentPage = data.current_page;
+  documents[documentId].totalPages = data.total_pages;
+  documents[documentId].extractionQuality = data.extraction_quality_score;
+  documents[documentId].extractionMethod = data.extraction_method;
+  renderDocList();
+
+  if (!['ready', 'failed', 'needs_review'].includes(data.status)) {
+    setTimeout(() => pollStatus(documentId), 2000);
+  }
+}
+
+let editingLabelsDocId = null;
+let editingLabelsDraft = [];      // 편집 중인 라벨 배열 (저장 전까지는 여기서만 바뀜)
+let editLabelDebounceTimer = null;
+let lastEditLabelSuggestions = [];
+
+function startEditingLabels(id) {
+  editingLabelsDocId = id;
+  editingLabelsDraft = [...(documents[id].labels || [])];
+  renderDocList();
+}
+
+function cancelEditingLabels() {
+  editingLabelsDocId = null;
+  editingLabelsDraft = [];
+  renderDocList();
+}
+
+function removeDraftLabel(label) {
+  editingLabelsDraft = editingLabelsDraft.filter(l => l !== label);
+  renderDocList();
+}
+
+function buildLabelEditRow(id, doc) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex; flex-direction:column; gap:6px; width:100%; padding:6px 0;';
+
+  const nameLine = document.createElement('div');
+  nameLine.style.cssText = 'font-size:12px; color:#666;';
+  nameLine.textContent = doc.filename;
+  wrap.appendChild(nameLine);
+
+  const chipsLine = document.createElement('div');
+  chipsLine.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px;';
+  chipsLine.innerHTML = editingLabelsDraft.map(label => `
+    <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border:1px solid var(--border); border-radius:12px; font-size:12px; background:#eef0fd;">
+      ${label}
+      <span style="cursor:pointer; color:#888;" onclick="removeDraftLabel('${label.replace(/'/g, "\\'")}')">✕</span>
+    </span>
+  `).join('') || '<span class="meta">라벨 없음 — 파일명이 대신 쓰입니다</span>';
+  wrap.appendChild(chipsLine);
+
+  const inputLine = document.createElement('div');
+  inputLine.style.cssText = 'display:flex; gap:6px; align-items:center; position:relative;';
+  inputLine.innerHTML = `
+    <div style="position:relative; flex:1;">
+      <input type="text" id="editLabelInput" placeholder="라벨 추가 (콤마로 여러 개 가능)" autocomplete="off"
+             oninput="onEditLabelInput()" onkeydown="onEditLabelKeydown(event)" style="width:100%; box-sizing:border-box;">
+      <div id="editLabelSuggestions" style="position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid var(--border); border-radius:6px; z-index:10; display:none; max-height:140px; overflow-y:auto;"></div>
+    </div>
+    <button class="secondary" onclick="addDraftLabelFromInput()" style="flex:0 0 auto;">추가</button>
+  `;
+  wrap.appendChild(inputLine);
+
+  const actionLine = document.createElement('div');
+  actionLine.style.cssText = 'display:flex; gap:6px;';
+  actionLine.innerHTML = `
+    <button onclick="saveDocumentLabels('${id}')">저장 (자동으로 다시 처리됩니다)</button>
+    <button class="secondary" onclick="cancelEditingLabels()">취소</button>
+  `;
+  wrap.appendChild(actionLine);
+
+  return wrap;
+}
+
+function addDraftLabelFromInput() {
+  const input = document.getElementById('editLabelInput');
+  const newLabels = input.value.split(',').map(s => s.trim().replace(/등등?$/, '').trim()).filter(Boolean);
+  newLabels.forEach(label => {
+    if (!editingLabelsDraft.includes(label)) editingLabelsDraft.push(label);
+  });
+  input.value = '';
+  document.getElementById('editLabelSuggestions').style.display = 'none';
+  renderDocList();
+}
+
+async function onEditLabelInput() {
+  clearTimeout(editLabelDebounceTimer);
+  const input = document.getElementById('editLabelInput');
+  const query = input.value.trim();
+  editLabelDebounceTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/document-labels/search?q=${encodeURIComponent(query)}`);
+      const labels = await res.json();
+      lastEditLabelSuggestions = labels;
+      renderEditLabelSuggestions(labels);
+    } catch (err) { /* 자동완성 실패는 조용히 무시 */ }
+  }, 150);
+}
+
+function renderEditLabelSuggestions(labels) {
+  const box = document.getElementById('editLabelSuggestions');
+  if (!box) return;
+  if (!labels.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = labels.map((label, idx) => `
+    <div style="padding:6px 10px; cursor:pointer; border-bottom:1px solid var(--border); font-size:12px; ${idx === 0 ? 'background:#eef0fd;' : ''}"
+         onmousedown="selectEditLabelSuggestion('${label.replace(/'/g, "\\'")}')">${label}</div>
+  `).join('');
+  box.style.display = 'block';
+}
+
+function selectEditLabelSuggestion(label) {
+  if (!editingLabelsDraft.includes(label)) editingLabelsDraft.push(label);
+  document.getElementById('editLabelInput').value = '';
+  document.getElementById('editLabelSuggestions').style.display = 'none';
+  lastEditLabelSuggestions = [];
+  renderDocList();
+}
+
+function onEditLabelKeydown(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    if (lastEditLabelSuggestions.length) {
+      selectEditLabelSuggestion(lastEditLabelSuggestions[0]);
+    } else {
+      addDraftLabelFromInput();
+    }
+  }
+}
+
+async function saveDocumentLabels(id) {
+  try {
+    const res = await fetch(`/api/documents/${id}/labels`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ labels: editingLabelsDraft }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '라벨 저장 실패');
+    upsertDocument(id, { labels: data.labels, status: 'reprocessing' === data.status ? 'extracted' : data.status });
+    editingLabelsDocId = null;
+    editingLabelsDraft = [];
+    renderDocList();
+    pollStatus(id);  // 자동 재처리가 시작됐으니 상태 폴링도 다시 걸어준다
+  } catch (err) {
+    alert('라벨 저장 실패: ' + err.message);
+  }
+}
+
+function renderDocList() {
+  const list = document.getElementById('docList');
+  const countEl = document.getElementById('docListCount');
+  const entries = Object.entries(documents).sort((a, b) => (b[1]._order ?? 0) - (a[1]._order ?? 0));
+  if (countEl) countEl.textContent = `등록된 문서: 총 ${entries.length}개 (최근 등록순, 파일명을 클릭하면 원본을 새 탭에서 엽니다)`;
+
+  list.innerHTML = '';
+  for (const [id, doc] of entries) {
+    const row = document.createElement('div');
+    row.className = 'doc-row';
+    const categoryText = doc.category
+      ? `<span class="meta" style="margin-left:6px;">${doc.category} ${(doc.categorySimilarity * 100).toFixed(0)}%</span>`
+      : '';
+    const progressText = doc.status === 'extracting' && doc.totalPages
+      ? `<span class="meta" style="margin-left:6px;">${doc.currentPage || 0}/${doc.totalPages}페이지</span>`
+      : '';
+    const qualityText = Number.isFinite(doc.extractionQuality)
+      ? `<span class="meta" style="margin-left:6px;">추출품질 ${(doc.extractionQuality * 100).toFixed(0)}%</span>`
+      : '';
+    const retryButton = ['failed', 'needs_review'].includes(doc.status)
+      ? `<button class="secondary" style="margin:0 0 0 6px; padding:2px 8px; font-size:11px;" onclick="retryDocument('${id}')">재시도</button>`
+      : (doc.status === 'extracting'
+          ? `<button class="secondary" style="margin:0 0 0 6px; padding:2px 8px; font-size:11px;" onclick="retryDocument('${id}')" title="진행률이 한참 안 늘어나고 멈춘 것 같을 때만 눌러주세요">멈췄으면 재시도</button>`
+          : '');
+
+    if (editingLabelsDocId === id) {
+      row.appendChild(buildLabelEditRow(id, doc));
+      list.appendChild(row);
+      continue;
+    }
+
+    const labels = doc.labels || [];
+    const labelsText = labels.length
+      ? `<span class="meta" style="margin-left:6px; cursor:pointer; text-decoration:underline dotted;" onclick="startEditingLabels('${id}')" title="클릭해서 라벨 수정">🏷 ${labels.join(', ')}</span>`
+      : `<span class="meta" style="margin-left:6px; cursor:pointer; text-decoration:underline dotted; color:#999;" onclick="startEditingLabels('${id}')" title="클릭해서 라벨 붙이기">라벨 없음</span>`;
+
+    row.innerHTML = `
+      <span class="doc-name" style="cursor:pointer; text-decoration:underline; text-decoration-style:dotted;" title="클릭해서 원본 파일 열기: ${doc.filename}">${doc.filename}</span>
+      <span class="status-pill status-${doc.status}">${doc.status}${doc.warning ? ' ⚠' : ''}</span>${progressText}${qualityText}${categoryText}${retryButton}${labelsText}
+    `;
+    row.querySelector('.doc-name').addEventListener('click', () => {
+      openFileViewer(id, doc.filename);
+    });
+    if (doc.warning) row.title = doc.warning;
+    list.appendChild(row);
+  }
+}
+
+const evalRuns = {}; // 'A' -> 결과, 'B' -> 결과 (설정 바꾸기 전/후를 나란히 비교하는 용도)
+
+function parseEvalQuestions(text) {
+  return text.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    const [q, expected] = line.split('|').map(s => s.trim());
+    return { question: q, expected_filename: expected || null };
+  });
+}
+
+async function runEvaluation(label) {
+  const raw = document.getElementById('evalQuestions').value;
+  const questions = parseEvalQuestions(raw);
+  const note = document.getElementById('evalNote');
+  if (!questions.length) { note.textContent = '질문을 한 줄 이상 입력하세요.'; return; }
+
+  note.innerHTML = `<span class="spinner"></span>${label} 실행 중... (질문 ${questions.length}개, 실제 파이프라인을 순서대로 태우는 중이라 시간이 걸릴 수 있습니다)`;
+  try {
+    const res = await fetch('/api/debug/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '요청 실패');
+    evalRuns[label] = data;
+    note.textContent = `실행 ${label} 저장됨 (질문 ${questions.length}개) — 설정을 바꾸고 다른 라벨로 다시 실행해서 비교해보세요.`;
+    renderEvalResults();
+  } catch (err) {
+    note.textContent = '오류: ' + err.message;
+  }
+}
+
+function renderEvalResults() {
+  const box = document.getElementById('evalResults');
+  box.innerHTML = ['A', 'B'].map(label => {
+    const data = evalRuns[label];
+    if (!data) {
+      return `<div class="meta" style="padding:14px; border:1px dashed var(--border); border-radius:8px;">실행 ${label} 결과 없음 — 위 버튼으로 실행해보세요.</div>`;
+    }
+    const rows = data.results.map(r => `
+      <tr>
+        <td style="padding:4px; font-size:11.5px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${r.question}">${r.question}</td>
+        <td style="padding:4px; font-size:11.5px; text-align:right;">${r.top_similarity !== null ? (r.top_similarity * 100).toFixed(1) + '%' : '-'}</td>
+        <td style="padding:4px; font-size:11.5px; text-align:center;">${r.expected_hit === null ? '-' : (r.expected_hit ? '✅' : '❌')}</td>
+        <td style="padding:4px; font-size:11.5px; text-align:right;">${r.total_seconds.toFixed(2)}s</td>
+      </tr>`).join('');
+    return `
+      <div style="border:1px solid var(--border); border-radius:8px; padding:10px;">
+        <div style="font-weight:600; margin-bottom:6px;">실행 ${label}</div>
+        <div class="meta" style="margin-bottom:6px;">평균 시간 ${data.avg_total_seconds.toFixed(2)}s · 평균 유사도 ${data.avg_top_similarity !== null ? (data.avg_top_similarity * 100).toFixed(1) + '%' : '-'} · 적중률 ${data.hit_rate !== null ? (data.hit_rate * 100).toFixed(0) + '%' : '해당없음(정답 파일 미지정)'}</div>
+        <table style="width:100%; border-collapse:collapse;">
+          <thead><tr>
+            <th style="text-align:left; padding:4px; border-bottom:1px solid var(--border); font-size:11px;">질문</th>
+            <th style="padding:4px; border-bottom:1px solid var(--border); font-size:11px;">유사도</th>
+            <th style="padding:4px; border-bottom:1px solid var(--border); font-size:11px;">적중</th>
+            <th style="padding:4px; border-bottom:1px solid var(--border); font-size:11px;">시간</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+}
+</script>
+
+<div id="fileViewerOverlay" style="display:none; position:fixed; inset:0; background:rgba(28,35,51,0.6); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:var(--surface); width:90%; height:88%; max-width:1100px; border-radius:10px; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border);">
+      <span id="fileViewerTitle" style="font-size:13px; font-weight:600; font-family:var(--mono);"></span>
+      <div>
+        <a id="fileViewerDownload" href="#" style="font-size:12px; color:var(--accent); margin-right:14px; text-decoration:none;">새 탭에서 열기 ↗</a>
+        <button onclick="closeFileViewer()" style="margin-top:0; padding:4px 10px;">닫기 ✕</button>
+      </div>
+    </div>
+    <iframe id="fileViewerFrame" style="flex:1; border:none; width:100%;"></iframe>
+  </div>
+</div>
+
+<script>
+function openFileViewer(documentId, filename) {
+  const url = `/api/documents/${documentId}/file`;
+  document.getElementById('fileViewerTitle').textContent = filename;
+  document.getElementById('fileViewerFrame').src = url;
+  document.getElementById('fileViewerDownload').href = url;
+  document.getElementById('fileViewerOverlay').style.display = 'flex';
+}
+function closeFileViewer() {
+  document.getElementById('fileViewerOverlay').style.display = 'none';
+  document.getElementById('fileViewerFrame').src = ''; // 닫을 때 로딩 중단
+}
+document.getElementById('fileViewerOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'fileViewerOverlay') closeFileViewer(); // 바깥 클릭 시 닫기
+});
+</script>
+
+</body>
+</html>

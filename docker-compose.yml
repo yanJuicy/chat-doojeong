@@ -1,0 +1,64 @@
+services:
+  app:
+    profiles: ["container-app"]  # 기본 compose up에서는 제외. 필요할 때만 --profile container-app 사용
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - .env
+    environment:
+      # .env의 localhost 값은 호스트 PC 기준이라, 컨테이너 네트워크에서는 서비스 이름으로 덮어써야 한다.
+      QDRANT_HOST: qdrant
+      LLM_PROVIDER_BASE_URL: http://ollama:11434
+      POSTGRES_DSN: postgresql+asyncpg://user:password@postgres:5432/ragdb
+    depends_on:
+      - qdrant
+      - postgres
+      - ollama
+    volumes:
+      - ./models:/app/models   # 사전 반입한 임베딩/리랭커/OCR 모델 가중치 마운트
+      - paddlex_models:/root/.paddlex   # PaddleOCR이 첫 실행 시 받는 부가 모델 캐시 (없으면 재빌드마다 재다운로드됨)
+      - uploaded_files:/app/uploaded_files   # 업로드 원본 파일+추출 이미지 (없으면 재빌드마다 파일이 사라져서 404남)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]   # bge-m3/bge-reranker가 GPU를 쓰도록 (PaddleOCR은 별도로 CPU 고정되어 있음)
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.2   # latest 대신 버전 고정 (재현성 확보, 예고 없는 breaking change 방지)
+    ports:
+      - "127.0.0.1:6333:6333"   # 사내망 등 외부에서 접속 못 하도록 localhost로만 바인딩 (보안 요건)
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  postgres:
+    image: postgres:16.6   # 16.x 최신 안정 패치 버전으로 고정
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Ollama는 폐쇄망 정책에 따라 별도 GPU 서버에서 이미 구동 중이라면 이 서비스는 생략 가능
+  ollama:
+    image: ollama/ollama:0.32.1   # latest 대신 버전 고정
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+volumes:
+  qdrant_data:
+  postgres_data:
+  ollama_data:
+  paddlex_models:
+  uploaded_files:
