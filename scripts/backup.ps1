@@ -1,23 +1,32 @@
-<#
+﻿<#
 .SYNOPSIS
     PostgreSQL + Qdrant + uploaded_files를 한 번에 백업한다.
 
 .DESCRIPTION
     2026-08-09에 수동으로 겪었던 문제(Git Bash의 Docker 경로 변환, docker cp 대상 경로 처리)를
     피하기 위해 PowerShell로 작성했다. 매번 실행할 때마다 backups/<타임스탬프>/ 폴더를 만들고
-    그 안에 세 가지를 전부 담는다. 오래된 백업은 -KeepCount 개수만 남기고 자동 삭제하되,
-    이름 패턴(yyyyMMdd_HHmmss)과 3개 아티팩트가 모두 존재하는 폴더만 삭제 대상으로 삼는다
+    그 안에 세 아티팩트(ragdb.dump, qdrant_documents.snapshot, uploaded_files.zip)와
+    manifest.json(각 파일의 크기+SHA256, 생성 시각)을 담는다. manifest.json은 임시 파일에
+    먼저 쓴 뒤 원자적으로 이름을 바꿔서, 백업 도중 프로세스가 죽어도 반쪽짜리 manifest가
+    남지 않게 한다. 오래된 백업은 -KeepCount 개수만 남기고 자동 삭제하되, 이름 패턴
+    (yyyyMMdd_HHmmss)과 4개 아티팩트(3개+manifest)가 모두 존재하는 폴더만 삭제 대상으로 삼는다
     (수동으로 만든 백업이나 실패해서 불완전한 백업은 절대 자동 삭제하지 않음).
 
 .PARAMETER KeepCount
     보관할 최근 백업 개수. 기본 7개.
 
+.PARAMETER QdrantBaseUrl
+    Qdrant REST API 주소. 격리된/임시 Qdrant를 대상으로 백업을 검증할 때 바꿔서 쓴다.
+    기본값은 이 프로젝트의 docker-compose가 노출하는 127.0.0.1:6333.
+
 .EXAMPLE
     .\scripts\backup.ps1
     .\scripts\backup.ps1 -KeepCount 14
+    .\scripts\backup.ps1 -QdrantBaseUrl "http://127.0.0.1:16333"
 #>
 param(
-    [int]$KeepCount = 7
+    [int]$KeepCount = 7,
+    [string]$QdrantBaseUrl = "http://127.0.0.1:6333"
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,14 +80,14 @@ Write-Host "[2/3] Qdrant 스냅샷 생성 중..." -ForegroundColor Yellow
 $qdrantContainer = Get-ComposeContainerId "qdrant"
 $snapshotName = $null
 try {
-    $snapshotResponse = Invoke-RestMethod -Uri "http://127.0.0.1:6333/collections/documents/snapshots" -Method Post
+    $snapshotResponse = Invoke-RestMethod -Uri "$QdrantBaseUrl/collections/documents/snapshots" -Method Post
     $snapshotName = $snapshotResponse.result.name
     if (-not $snapshotName) { throw "Qdrant 스냅샷 생성 실패" }
     docker cp "${qdrantContainer}:/qdrant/snapshots/documents/$snapshotName" (Join-Path $BackupDir "qdrant_documents.snapshot")
     Assert-LastExitCode "docker cp (qdrant snapshot)"
 } finally {
     if ($snapshotName) {
-        Invoke-RestMethod -Uri "http://127.0.0.1:6333/collections/documents/snapshots/$snapshotName" -Method Delete -ErrorAction SilentlyContinue | Out-Null
+        Invoke-RestMethod -Uri "$QdrantBaseUrl/collections/documents/snapshots/$snapshotName" -Method Delete -ErrorAction SilentlyContinue | Out-Null
     }
 }
 $qdrantSize = (Get-Item (Join-Path $BackupDir "qdrant_documents.snapshot")).Length / 1MB
@@ -92,14 +101,39 @@ Compress-Archive -Path "$uploadedFilesPath\*" -DestinationPath $zipPath -Compres
 $zipSize = (Get-Item $zipPath).Length / 1MB
 Write-Host ("  완료: uploaded_files.zip ({0:N1} MB)" -f $zipSize) -ForegroundColor Green
 
-# --- 오래된 백업 정리 (이름 패턴 + 3개 아티팩트가 모두 존재하는 폴더만 대상) ---
+# --- manifest.json (각 아티팩트의 크기+SHA256, 임시 파일 -> 원자적 rename) ---
+Write-Host "manifest.json 작성 중 (SHA256 계산)..." -ForegroundColor Yellow
+$artifactNames = @("ragdb.dump", "qdrant_documents.snapshot", "uploaded_files.zip")
+$artifacts = foreach ($name in $artifactNames) {
+    $path = Join-Path $BackupDir $name
+    $hash = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+    [ordered]@{
+        name   = $name
+        size   = (Get-Item $path).Length
+        sha256 = $hash
+    }
+}
+$manifest = [ordered]@{
+    schema_version = 1
+    created_at     = (Get-Date).ToUniversalTime().ToString("o")
+    backup_timestamp = $Stamp
+    artifacts      = $artifacts
+}
+$manifestTmpPath = Join-Path $BackupDir "manifest.json.tmp"
+$manifestPath = Join-Path $BackupDir "manifest.json"
+$manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestTmpPath -Encoding utf8
+Move-Item -Path $manifestTmpPath -Destination $manifestPath -Force
+Write-Host "  완료: manifest.json" -ForegroundColor Green
+
+# --- 오래된 백업 정리 (이름 패턴 + 4개 아티팩트(3개+manifest)가 모두 존재하는 폴더만 대상) ---
 $backupNamePattern = '^\d{8}_\d{6}$'
 $eligibleForCleanup = Get-ChildItem (Join-Path $ProjectRoot "backups") -Directory |
     Where-Object { $_.Name -match $backupNamePattern } |
     Where-Object {
         (Test-Path (Join-Path $_.FullName "ragdb.dump")) -and
         (Test-Path (Join-Path $_.FullName "qdrant_documents.snapshot")) -and
-        (Test-Path (Join-Path $_.FullName "uploaded_files.zip"))
+        (Test-Path (Join-Path $_.FullName "uploaded_files.zip")) -and
+        (Test-Path (Join-Path $_.FullName "manifest.json"))
     } |
     Sort-Object Name -Descending
 if ($eligibleForCleanup.Count -gt $KeepCount) {

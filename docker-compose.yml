@@ -33,7 +33,7 @@ services:
       - qdrant_data:/qdrant/storage
 
   postgres:
-    image: postgres:16.6   # 16.x 최신 안정 패치 버전으로 고정
+    image: postgres:16.14-trixie   # 데이터 볼륨의 glibc collation 2.41과 일치하는 PostgreSQL 16 최신 패치
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}

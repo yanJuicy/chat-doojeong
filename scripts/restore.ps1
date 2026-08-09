@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     backup.ps1으로 만든 백업에서 PostgreSQL + Qdrant + uploaded_files를 복원한다.
 
@@ -8,9 +8,15 @@
     새로 채운 뒤 성공했을 때만 이전 폴더를 지운다 (진짜 시점 복원 — 덮어쓰기 병합이 아니라서
     백업 이후에 추가된 파일이 그대로 남는 일이 없음. 실패하면 이전 폴더로 자동 롤백).
     실행 전 반드시 -Confirm 스위치를 명시해야 실제로 진행된다(안 붙이면 무엇을 할지만 보여주고 끝).
-    기본적으로 3개 아티팩트(ragdb.dump, qdrant_documents.snapshot, uploaded_files.zip)가
-    전부 있어야만 실제 복원이 진행된다 — 일부만 복원하면 PostgreSQL과 Qdrant가 서로 다른
-    시점을 가리키게 되는 위험이 있기 때문. 불완전한 백업이어도 강행하려면 -AllowPartial 필요.
+
+    기본적으로 3개 아티팩트(ragdb.dump, qdrant_documents.snapshot, uploaded_files.zip)와
+    manifest.json이 전부 있어야만 실제 복원이 진행된다 — 일부만 복원하면 PostgreSQL과 Qdrant가
+    서로 다른 시점을 가리키게 되는 위험이 있기 때문. 불완전한 백업이어도 강행하려면 -AllowPartial
+    필요. manifest.json이 있으면 존재하는 아티팩트마다 SHA256을 재계산해서 대조하고, 하나라도
+    안 맞으면(잘렸거나 변조됨) -AllowPartial 여부와 무관하게 무조건 중단한다.
+
+    앱(8000번 포트)이 실행 중이면 기본적으로 거부한다 — 복원 도중 앱이 PostgreSQL/Qdrant에
+    쓰기를 하면 방금 복원한 상태가 다시 어긋난다. 강행하려면 -AllowRunningApp 필요.
 
 .PARAMETER BackupTimestamp
     backups/ 아래의 타임스탬프 폴더명 (예: 20260809_201500). 생략하면 최신 백업을 사용한다.
@@ -19,18 +25,29 @@
     이 스위치 없이 실행하면 dry-run(할 일만 출력)만 한다.
 
 .PARAMETER AllowPartial
-    3개 아티팩트 중 일부가 없어도 있는 것만으로 강제 진행한다. PostgreSQL/Qdrant 시점
-    불일치 위험을 감수한다는 뜻이므로 기본값은 꺼져 있다.
+    3개 아티팩트나 manifest.json 중 일부가 없어도 있는 것만으로 강제 진행한다. PostgreSQL/Qdrant
+    시점 불일치 위험을 감수한다는 뜻이므로 기본값은 꺼져 있다. (SHA256 불일치는 이 스위치로도
+    못 넘어간다 — 손상/변조된 아티팩트는 항상 중단.)
+
+.PARAMETER AllowRunningApp
+    8000번 포트에서 앱이 실행 중이어도 복원을 강행한다. 기본값은 꺼져 있다.
+
+.PARAMETER QdrantBaseUrl
+    Qdrant REST API 주소. 격리된/임시 Qdrant를 대상으로 복원을 검증할 때 바꿔서 쓴다.
+    기본값은 이 프로젝트의 docker-compose가 노출하는 127.0.0.1:6333.
 
 .EXAMPLE
     .\scripts\restore.ps1                          # 최신 백업으로 무엇을 할지만 미리보기
     .\scripts\restore.ps1 -Confirm                 # 최신 백업으로 실제 복원
     .\scripts\restore.ps1 -BackupTimestamp 20260809_201500 -Confirm
+    .\scripts\restore.ps1 -Confirm -QdrantBaseUrl "http://127.0.0.1:16333"  # 격리 환경 검증
 #>
 param(
     [string]$BackupTimestamp,
     [switch]$Confirm,
-    [switch]$AllowPartial
+    [switch]$AllowPartial,
+    [switch]$AllowRunningApp,
+    [string]$QdrantBaseUrl = "http://127.0.0.1:6333"
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,18 +82,52 @@ if (-not (Test-Path $BackupDir)) { throw "백업 폴더를 찾을 수 없습니�
 $pgDump = Join-Path $BackupDir "ragdb.dump"
 $qdrantSnapshot = Join-Path $BackupDir "qdrant_documents.snapshot"
 $uploadedZip = Join-Path $BackupDir "uploaded_files.zip"
+$manifestPath = Join-Path $BackupDir "manifest.json"
 
 $missing = @()
 if (-not (Test-Path $pgDump)) { $missing += "ragdb.dump" }
 if (-not (Test-Path $qdrantSnapshot)) { $missing += "qdrant_documents.snapshot" }
 if (-not (Test-Path $uploadedZip)) { $missing += "uploaded_files.zip" }
+if (-not (Test-Path $manifestPath)) { $missing += "manifest.json" }
 
 Write-Host "=== 복원 대상 백업: $BackupTimestamp ===" -ForegroundColor Cyan
 Write-Host "  PostgreSQL: $pgDump $(if (Test-Path $pgDump) {'(존재)'} else {'(없음)'})"
 Write-Host "  Qdrant:     $qdrantSnapshot $(if (Test-Path $qdrantSnapshot) {'(존재)'} else {'(없음)'})"
 Write-Host "  업로드파일: $uploadedZip $(if (Test-Path $uploadedZip) {'(존재)'} else {'(없음)'})"
+Write-Host "  매니페스트: $manifestPath $(if (Test-Path $manifestPath) {'(존재)'} else {'(없음)'})"
 if ($missing.Count -gt 0) {
     Write-Host "  경고: 누락된 아티팩트 - $($missing -join ', ')" -ForegroundColor Red
+}
+
+# --- manifest.json이 있으면 존재하는 아티팩트의 SHA256을 대조한다 ---
+$hashMismatches = @()
+if (Test-Path $manifestPath) {
+    $manifest = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+    $manifestByName = @{}
+    foreach ($entry in $manifest.artifacts) { $manifestByName[$entry.name] = $entry }
+
+    foreach ($pair in @(
+        @{ Name = "ragdb.dump"; Path = $pgDump },
+        @{ Name = "qdrant_documents.snapshot"; Path = $qdrantSnapshot },
+        @{ Name = "uploaded_files.zip"; Path = $uploadedZip }
+    )) {
+        if (-not (Test-Path $pair.Path)) { continue }
+        if (-not $manifestByName.ContainsKey($pair.Name)) { continue }
+        $expected = $manifestByName[$pair.Name].sha256
+        $actual = (Get-FileHash -Path $pair.Path -Algorithm SHA256).Hash
+        if ($actual -ne $expected) {
+            $hashMismatches += $pair.Name
+            Write-Host "  경고: $($pair.Name)의 SHA256이 manifest.json과 다릅니다 (손상 또는 변조 의심)" -ForegroundColor Red
+        }
+    }
+    if ($hashMismatches.Count -eq 0) {
+        Write-Host "  SHA256 검증: 존재하는 아티팩트 전부 manifest.json과 일치" -ForegroundColor Green
+    }
+}
+
+$appRunning = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
+if ($appRunning) {
+    Write-Host "  경고: 8000번 포트에서 앱이 실행 중입니다." -ForegroundColor Yellow
 }
 
 if (-not $Confirm) {
@@ -86,14 +137,26 @@ if (-not $Confirm) {
     if ($missing.Count -gt 0) {
         Write-Host "*** 백업이 불완전합니다. -AllowPartial 없이는 실제 복원이 거부됩니다. ***" -ForegroundColor Red
     }
+    if ($hashMismatches.Count -gt 0) {
+        Write-Host "*** SHA256 불일치가 있습니다. -AllowPartial을 줘도 실제 복원은 무조건 거부됩니다. ***" -ForegroundColor Red
+    }
+    if ($appRunning) {
+        Write-Host "*** 앱이 실행 중입니다. -AllowRunningApp 없이는 실제 복원이 거부됩니다. ***" -ForegroundColor Red
+    }
     exit 0
 }
 
+if ($hashMismatches.Count -gt 0) {
+    throw "SHA256 불일치: $($hashMismatches -join ', ') - 손상되었거나 변조된 백업입니다. 다른 백업을 사용하세요 (이 검사는 -AllowPartial로도 못 넘어갑니다)."
+}
 if ($missing.Count -gt 0 -and -not $AllowPartial) {
     throw "백업이 불완전합니다 (누락: $($missing -join ', ')). PostgreSQL/Qdrant 시점 불일치 위험이 있어 기본적으로 거부합니다. 그래도 강행하려면 -AllowPartial을 명시하세요."
 }
 if ($missing.Count -gt 0) {
     Write-Host "경고: 불완전한 백업으로 강제 복원합니다 (누락: $($missing -join ', '))." -ForegroundColor Red
+}
+if ($appRunning -and -not $AllowRunningApp) {
+    throw "8000번 포트에서 앱이 실행 중입니다. 먼저 앱을 종료하거나 -AllowRunningApp을 명시하세요."
 }
 
 Write-Host ""
@@ -121,7 +184,7 @@ if (Test-Path $qdrantSnapshot) {
     try {
         docker cp $qdrantSnapshot "${qdrantContainer}:/qdrant/snapshots/documents/restore.snapshot"
         Assert-LastExitCode "docker cp (qdrant snapshot 업로드)"
-        Invoke-RestMethod -Uri "http://127.0.0.1:6333/collections/documents/snapshots/recover" -Method Put -ContentType "application/json" -Body '{"location": "file:///qdrant/snapshots/documents/restore.snapshot"}'
+        Invoke-RestMethod -Uri "$QdrantBaseUrl/collections/documents/snapshots/recover?wait=true" -Method Put -ContentType "application/json" -Body '{"location": "file:///qdrant/snapshots/documents/restore.snapshot"}'
     } finally {
         docker exec $qdrantContainer rm -f /qdrant/snapshots/documents/restore.snapshot 2>$null
     }
