@@ -60,6 +60,7 @@ from .core.structured_chunker import StructuredChunker
 from .core.similarity_utils import cosine_similarity
 from .db.models import ChatLog, Document, DocumentChunk, DocumentLabel, DocumentStatus
 from .db.session import async_session_factory
+from .routers.evaluation import create_evaluation_router
 from .workers import chunking_worker, embedding_worker, extraction_worker
 from .zip_ingestion import process_zip_bytes
 
@@ -1069,3 +1070,7 @@ async def health(request: Request) -> JSONResponse:
     all_ok = all(v == "ok" for v in checks.values())
     status_code = 200 if all_ok else 503
     return JSONResponse(status_code=status_code, content={"status": "ok" if all_ok else "degraded", "checks": checks})
+
+
+# Evaluation remains API-only: the browser console intentionally has no evaluation panel.
+app.include_router(create_evaluation_router(_run_chat_pipeline))

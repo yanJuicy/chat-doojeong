@@ -59,6 +59,7 @@ python scripts/audit_pdf_pages.py --summary-only "C:\path\to\pdf-folder"
 - `POST /api/documents/{id}/reextract`: 기존 라벨·원본을 보존하고 OCR부터 재처리
 - `POST /api/chat`: 일반 답변
 - `GET /api/chat/stream`: SSE 토큰 스트리밍
+- `POST /api/evaluation/run`: 콘솔 UI 없이 실행하는 회귀 평가 (`docs/EVALUATION.md` 참고)
 
 ## 이번 개선 사항
 
