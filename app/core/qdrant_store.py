@@ -28,6 +28,10 @@ class QdrantVectorStore(BaseVectorStore):
         self._client = AsyncQdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
         self._collection_name = settings.qdrant_collection_name
 
+    async def ping(self) -> None:
+        """Qdrant가 응답하는지만 확인한다 (/health용). 응답 없으면 예외가 그대로 올라간다."""
+        await self._client.collection_exists(self._collection_name)
+
     async def ensure_collection(self) -> None:
         """컬렉션이 없으면 dense+sparse 벡터 스키마로 생성한다. 앱 시작 시 한 번 호출한다."""
         exists = await self._client.collection_exists(self._collection_name)

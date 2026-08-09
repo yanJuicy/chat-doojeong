@@ -92,5 +92,9 @@ class Settings(BaseSettings):
     vlm_keep_alive: str = "2m"  # 이미지 여러 장 연속 재처리 때 매번 3.2GB 모델을 다시 읽지 않음
     image_storage_dir: str = "./uploaded_files/images"  # 추출된 이미지 저장 위치 (정적 서빙 경로와 연결됨)
 
+    # --- 업로드 안전장치 ---
+    max_upload_size_mb: int = 200  # 파일 하나(또는 zip 안 파일 하나)당 최대 크기
+    max_zip_total_uncompressed_mb: int = 1000  # zip 안 파일들의 압축 해제 후 총 용량 상한 (zip bomb 방지)
+
 
 settings = Settings()

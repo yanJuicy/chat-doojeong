@@ -65,6 +65,12 @@ class QwenOllamaProvider(BaseLLMProvider):
                     if chunk.get("done"):
                         break
 
+    async def ping(self) -> None:
+        """Ollama 서버가 응답하는지만 확인한다 (/health용). 모델을 로드하지 않는 가벼운 호출."""
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=5.0) as client:
+            response = await client.get("/api/tags")
+            response.raise_for_status()
+
     async def unload(self) -> None:
         """메타데이터 생성 뒤 Ollama 모델을 내려 다음 GPU 단계에 VRAM을 양보한다."""
         try:

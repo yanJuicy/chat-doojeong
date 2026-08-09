@@ -40,7 +40,7 @@ class WorkerOrchestrationTests(unittest.IsolatedAsyncioTestCase):
 
         app = SimpleNamespace(
             state=SimpleNamespace(
-                worker_lock=asyncio.Lock(),
+                gpu_lock=asyncio.Lock(),
                 extractor_registry=object(),
                 chunker=object(),
                 intent_classifier=object(),
@@ -79,7 +79,7 @@ class WorkerOrchestrationTests(unittest.IsolatedAsyncioTestCase):
 
         app = SimpleNamespace(
             state=SimpleNamespace(
-                worker_lock=asyncio.Lock(),
+                gpu_lock=asyncio.Lock(),
                 extractor_registry=object(),
                 chunker=object(),
                 intent_classifier=object(),

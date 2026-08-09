@@ -11,6 +11,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from .api_models import ZipUploadItem
+from .config import settings
 from .db.models import Document, DocumentStatus
 from .db.session import async_session_factory
 
@@ -38,8 +39,13 @@ async def process_zip_bytes(
     created: list[ZipUploadItem],
     skipped: list[str],
     depth: int = 0,
+    _total_uncompressed_bytes: list[int] | None = None,
 ) -> None:
     """ZIP과 중첩 ZIP을 순회하며 지원 문서를 중복 확인 후 등록한다."""
+    if _total_uncompressed_bytes is None:
+        _total_uncompressed_bytes = [0]  # 중첩 zip 재귀 호출 전체에서 공유하는 압축 해제 누적 용량 (zip bomb 방지)
+    max_total_bytes = settings.max_zip_total_uncompressed_mb * 1024 * 1024
+
     if len(created) + len(skipped) >= MAX_TOTAL_ENTRIES:
         return
 
@@ -59,13 +65,25 @@ async def process_zip_bytes(
 
             display_name = Path(fix_zip_entry_name(info)).name
             extension = Path(display_name).suffix.lower()
+
+            if _total_uncompressed_bytes[0] + info.file_size > max_total_bytes:
+                logger.warning(
+                    "zip 압축 해제 총 용량 상한(%dMB) 도달, 나머지는 건너뜀", settings.max_zip_total_uncompressed_mb
+                )
+                skipped.append(f"{display_name} (압축 해제 총 용량 상한 초과로 건너뜀)")
+                return
+
             file_bytes = archive.read(info)
+            _total_uncompressed_bytes[0] += len(file_bytes)
 
             if extension == ".zip":
                 if depth + 1 >= MAX_DEPTH:
                     skipped.append(f"{display_name} (중첩이 너무 깊어 건너뜀)")
                     continue
-                await process_zip_bytes(file_bytes, upload_dir, created, skipped, depth=depth + 1)
+                await process_zip_bytes(
+                    file_bytes, upload_dir, created, skipped, depth=depth + 1,
+                    _total_uncompressed_bytes=_total_uncompressed_bytes,
+                )
                 continue
 
             if extension not in SUPPORTED_EXTENSIONS:

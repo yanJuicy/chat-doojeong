@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from langdetect import detect as detect_language
 from sqlalchemy import delete, func, select
@@ -98,8 +98,10 @@ async def lifespan(app: FastAPI):
     app.state.question_cache = []
     # PaddleOCR은 로딩이 무겁고 안 쓰는 배포도 있으므로, extraction_worker 실행 시점에 지연 로딩한다.
     app.state.extractor_registry = ExtractorRegistry()
-    # DB의 SKIP LOCKED는 중복 선점만 막으므로, GPU 파이프라인은 별도 잠금으로 직렬화한다.
-    app.state.worker_lock = asyncio.Lock()
+    # DB의 SKIP LOCKED는 중복 선점만 막으므로, GPU를 만지는 모든 경로(백그라운드 워커 + /api/chat)를
+    # 이 잠금 하나로 직렬화한다. 안 그러면 채팅 중 임베딩/청킹 배치가 동시에 GPU를 잡아
+    # VRAM이 부족한 카드(RTX 5060 8GB 등)에서 OOM이 날 수 있다.
+    app.state.gpu_lock = asyncio.Lock()
 
     _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -145,13 +147,19 @@ async def upload_document(file: UploadFile, labels: list[str] = Form(default=[])
     한 문서가 여러 라벨을 동시에 가질 수 있다 (회사명+주제 등). 파일명이 내용을 잘 대표 못 하는
     경우(스캔 파일명 등)를 위해, 청킹 시 이 값들을 청크 접두어로 쓴다 (하나도 없으면 파일명으로 대체).
     """
-    ext = Path(file.filename).suffix.lower()
+    safe_filename = Path(file.filename).name
+    ext = Path(safe_filename).suffix.lower()
     if ext not in (".pdf", ".docx", ".txt", ".md", ".html", ".htm", ".jpg", ".jpeg", ".png"):
         raise HTTPException(
             status_code=400, detail=f"지원하지 않는 파일 형식입니다: {ext} (지원: .pdf, .docx, .txt, .md, .html, .jpg, .png)"
         )
 
     file_bytes = await file.read()
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=413, detail=f"파일이 너무 큽니다 ({len(file_bytes) / 1024 / 1024:.1f}MB > 상한 {settings.max_upload_size_mb}MB)"
+        )
     file_hash = hashlib.sha256(file_bytes).hexdigest()
 
     async with async_session_factory() as session:
@@ -168,12 +176,12 @@ async def upload_document(file: UploadFile, labels: list[str] = Form(default=[])
             )
 
         document_id = str(uuid.uuid4())
-        saved_path = _UPLOAD_DIR / f"{document_id}_{file.filename}"
+        saved_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
         saved_path.write_bytes(file_bytes)
 
         doc = Document(
             id=document_id,
-            filename=file.filename,
+            filename=safe_filename,
             file_path=str(saved_path),
             file_hash=file_hash,
             status=DocumentStatus.UPLOADED,
@@ -201,6 +209,12 @@ async def upload_zip(file: UploadFile) -> ZipUploadResponse:
         raise HTTPException(status_code=400, detail="zip 파일만 업로드 가능합니다.")
 
     zip_bytes = await file.read()
+    max_zip_bytes = settings.max_zip_total_uncompressed_mb * 1024 * 1024
+    if len(zip_bytes) > max_zip_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"zip 파일이 너무 큽니다 ({len(zip_bytes) / 1024 / 1024:.1f}MB > 상한 {settings.max_zip_total_uncompressed_mb}MB)",
+        )
 
     created: list[ZipUploadItem] = []
     skipped: list[str] = []
@@ -282,14 +296,16 @@ async def run_workers(request: Request, background_tasks: BackgroundTasks) -> Ru
 
 async def _run_workers_in_background(app: FastAPI) -> None:
     """run_workers의 실제 처리부. 응답을 이미 보낸 뒤 백그라운드에서 실행된다."""
-    worker_lock = getattr(app.state, "worker_lock", None)
-    if worker_lock is None:
-        worker_lock = asyncio.Lock()
-        app.state.worker_lock = worker_lock
+    gpu_lock = getattr(app.state, "gpu_lock", None)
+    if gpu_lock is None:
+        gpu_lock = asyncio.Lock()
+        app.state.gpu_lock = gpu_lock
 
     # 겹친 요청을 버리지 않고 직렬화한다. 앞선 실행이 끝나는 순간 새 문서가 들어와도
     # 대기 중인 실행이 DB를 한 번 더 확인하므로 작업이 남겨지는 경쟁 조건을 피한다.
-    async with worker_lock:
+    # 이 잠금은 /api/chat의 GPU 사용 구간과도 공유되므로, 채팅 응답 생성 중에는
+    # 백그라운드 워커의 다음 배치가 대기한다 (그 반대도 마찬가지).
+    async with gpu_lock:
         try:
             n_extracted = 0
             n_chunked = 0
@@ -720,6 +736,11 @@ async def _run_chat_pipeline(
     current_stage = "초기화"
     stage_timings: list[dict] = []
 
+    # 백그라운드 워커(임베딩/청킹의 LLM 자동 라벨링)와 GPU를 동시에 잡지 않도록 직렬화한다.
+    # 답변 생성이 끝날 때까지(스트리밍 도중 끊겨도 finally에서) 잠금을 들고 있는다.
+    gpu_lock: asyncio.Lock = request.app.state.gpu_lock
+    await gpu_lock.acquire()
+
     try:
         embedding_provider: BgeM3EmbeddingProvider = request.app.state.embedding_provider
         vector_store: QdrantVectorStore = request.app.state.vector_store
@@ -972,6 +993,8 @@ async def _run_chat_pipeline(
         logger.error("답변 생성 파이프라인 실패 (단계: %s): %s", current_stage, exc, exc_info=True)
         error_payload = {"stage": current_stage, "message": str(exc), "stage_timings": stage_timings}
         yield ("error", error_payload)
+    finally:
+        gpu_lock.release()
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -1016,5 +1039,29 @@ async def chat_stream(request: Request, question: str):
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health(request: Request) -> JSONResponse:
+    """DB/Qdrant/Ollama에 실제로 접속해서 상태를 확인한다. 하나라도 실패하면 503을 반환한다."""
+    checks: dict[str, str] = {}
+
+    try:
+        async with async_session_factory() as session:
+            await session.execute(select(1))
+        checks["postgres"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["postgres"] = f"error: {exc}"
+
+    try:
+        await request.app.state.vector_store.ping()
+        checks["qdrant"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["qdrant"] = f"error: {exc}"
+
+    try:
+        await request.app.state.llm_provider.ping()
+        checks["ollama"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["ollama"] = f"error: {exc}"
+
+    all_ok = all(v == "ok" for v in checks.values())
+    status_code = 200 if all_ok else 503
+    return JSONResponse(status_code=status_code, content={"status": "ok" if all_ok else "degraded", "checks": checks})

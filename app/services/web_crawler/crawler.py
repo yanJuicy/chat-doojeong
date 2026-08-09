@@ -38,7 +38,11 @@ class CrawlResult:
 
 
 def _same_domain(url: str, allowed_domain: str) -> bool:
-    return urlparse(url).netloc.endswith(allowed_domain)
+    """netloc이 allowed_domain 자신이거나, 그 서브도메인일 때만 True.
+    단순 endswith는 "evil-example.com"이 allowed_domain="example.com"에 걸리는 것을 못 막는다."""
+    netloc = urlparse(url).netloc.partition(":")[0].lower()  # 포트 제거
+    allowed = allowed_domain.lower()
+    return netloc == allowed or netloc.endswith("." + allowed)
 
 
 def _normalize_url(url: str) -> str:
