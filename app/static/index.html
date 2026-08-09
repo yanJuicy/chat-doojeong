@@ -224,16 +224,6 @@
     <div id="chunkList" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;"></div>
   </section>
 
-  <section class="card" style="grid-column: 1 / -1;">
-    <h2>정확도·속도 비교 도구</h2>
-    <p class="desc">실제 질문 여러 개를 지금 설정 그대로 파이프라인에 태워서, 실측 유사도·(정답 파일명을 알려주면) 적중 여부·단계별 소요시간을 표로 보여줍니다. 설정(.env)을 바꾼 뒤 다시 실행해서 A/B로 저장하면 전/후를 나란히 비교할 수 있어요.</p>
-    <p class="desc" style="margin-top:-8px;">한 줄에 질문 하나씩. 정답 파일이 있으면 <code>질문 | 파일명일부</code> 형식으로 (파일명은 몰라도 됨).</p>
-    <textarea id="evalQuestions" rows="5" placeholder="재정동향 4월호에서 통화신용정책 관련 수치는? | 재정동향&#10;교육부 2024년 정책 핵심 내용은? | 교육부"></textarea>
-    <button onclick="runEvaluation('A')">실행 → A로 저장</button>
-    <button class="secondary" onclick="runEvaluation('B')">실행 → B로 저장</button>
-    <div id="evalNote" class="meta"></div>
-    <div id="evalResults" style="margin-top:12px; display:grid; grid-template-columns: 1fr 1fr; gap:14px;"></div>
-  </section>
 </main>
 
 <script>
@@ -931,68 +921,6 @@ function renderDocList() {
   }
 }
 
-const evalRuns = {}; // 'A' -> 결과, 'B' -> 결과 (설정 바꾸기 전/후를 나란히 비교하는 용도)
-
-function parseEvalQuestions(text) {
-  return text.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
-    const [q, expected] = line.split('|').map(s => s.trim());
-    return { question: q, expected_filename: expected || null };
-  });
-}
-
-async function runEvaluation(label) {
-  const raw = document.getElementById('evalQuestions').value;
-  const questions = parseEvalQuestions(raw);
-  const note = document.getElementById('evalNote');
-  if (!questions.length) { note.textContent = '질문을 한 줄 이상 입력하세요.'; return; }
-
-  note.innerHTML = `<span class="spinner"></span>${label} 실행 중... (질문 ${questions.length}개, 실제 파이프라인을 순서대로 태우는 중이라 시간이 걸릴 수 있습니다)`;
-  try {
-    const res = await fetch('/api/debug/evaluate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ questions })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || '요청 실패');
-    evalRuns[label] = data;
-    note.textContent = `실행 ${label} 저장됨 (질문 ${questions.length}개) — 설정을 바꾸고 다른 라벨로 다시 실행해서 비교해보세요.`;
-    renderEvalResults();
-  } catch (err) {
-    note.textContent = '오류: ' + err.message;
-  }
-}
-
-function renderEvalResults() {
-  const box = document.getElementById('evalResults');
-  box.innerHTML = ['A', 'B'].map(label => {
-    const data = evalRuns[label];
-    if (!data) {
-      return `<div class="meta" style="padding:14px; border:1px dashed var(--border); border-radius:8px;">실행 ${label} 결과 없음 — 위 버튼으로 실행해보세요.</div>`;
-    }
-    const rows = data.results.map(r => `
-      <tr>
-        <td style="padding:4px; font-size:11.5px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${r.question}">${r.question}</td>
-        <td style="padding:4px; font-size:11.5px; text-align:right;">${r.top_similarity !== null ? (r.top_similarity * 100).toFixed(1) + '%' : '-'}</td>
-        <td style="padding:4px; font-size:11.5px; text-align:center;">${r.expected_hit === null ? '-' : (r.expected_hit ? '✅' : '❌')}</td>
-        <td style="padding:4px; font-size:11.5px; text-align:right;">${r.total_seconds.toFixed(2)}s</td>
-      </tr>`).join('');
-    return `
-      <div style="border:1px solid var(--border); border-radius:8px; padding:10px;">
-        <div style="font-weight:600; margin-bottom:6px;">실행 ${label}</div>
-        <div class="meta" style="margin-bottom:6px;">평균 시간 ${data.avg_total_seconds.toFixed(2)}s · 평균 유사도 ${data.avg_top_similarity !== null ? (data.avg_top_similarity * 100).toFixed(1) + '%' : '-'} · 적중률 ${data.hit_rate !== null ? (data.hit_rate * 100).toFixed(0) + '%' : '해당없음(정답 파일 미지정)'}</div>
-        <table style="width:100%; border-collapse:collapse;">
-          <thead><tr>
-            <th style="text-align:left; padding:4px; border-bottom:1px solid var(--border); font-size:11px;">질문</th>
-            <th style="padding:4px; border-bottom:1px solid var(--border); font-size:11px;">유사도</th>
-            <th style="padding:4px; border-bottom:1px solid var(--border); font-size:11px;">적중</th>
-            <th style="padding:4px; border-bottom:1px solid var(--border); font-size:11px;">시간</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  }).join('');
-}
 </script>
 
 <div id="fileViewerOverlay" style="display:none; position:fixed; inset:0; background:rgba(28,35,51,0.6); z-index:1000; align-items:center; justify-content:center;">

@@ -3,7 +3,12 @@
 이 문서는 실제로 이 프로젝트를 처음부터 끝까지 띄우면서 겪었던 문제와 해결책을 그대로 반영한 가이드입니다.
 `docs/DECISIONS.md`(스택 결정 이유)와 함께 보세요.
 
-## 방법 A (권장, 유일하게 검증된 경로) — 앱까지 전부 Docker로 실행
+## 방법 A (특수한 경우에만 — 평소 운영은 방법 B를 쓸 것) — 앱까지 전부 Docker로 실행
+
+> **주의**: 실제 운영에서는 앱을 Docker로 올리지 않습니다 — 코드 수정이 이미지에 반영 안 되고 갱신이
+> 꼬이는 문제를 여러 번 겪었습니다. 평소에는 아래 [방법 B](#방법-b--호스트에-직접-설치-지금-실제로-쓰는-방식)처럼
+> **인프라(Qdrant/PostgreSQL/Ollama)만 Docker로, 앱은 로컬 venv로 직접 실행**합니다. 이 방법 A는
+> Docker Desktop만으로 전체를 한 번에 검증하고 싶을 때, 또는 venv 설치가 안 되는 환경에서만 쓰세요.
 
 `Dockerfile` + `docker-compose.yml`에 Python 버전 충돌, transformers 문제, PaddleOCR API 문제 등을
 전부 반영해서 고정해뒀습니다. **venv를 따로 만들 필요가 없습니다** — Docker Desktop만 있으면 됩니다.
@@ -51,8 +56,10 @@ docker compose up -d --force-recreate app
   `paddlex_models:/root/.paddlex` 볼륨을 넣어뒀습니다. 이게 없으면 `docker compose up --build`를
   할 때마다 11개 모델(수백MB)을 매번 새로 받아서 체감 속도가 크게 느려집니다. 최초 1회만 받고
   이후로는 재사용됩니다.
-- **DB 테이블이 없다는 에러** → `main.py`의 `lifespan`에서 앱 시작 시 자동으로 테이블을 생성하도록
-  이미 고쳐져 있습니다 (`create_all`). 옛날 코드에는 이게 빠져있어서 업로드가 500 에러로 실패했었습니다.
+- **DB 테이블이 없다는 에러** → DB 스키마는 `create_all()`이 아니라 Alembic이 관리합니다(기존 테이블
+  컬럼 추가/변경을 `create_all()`은 못 하기 때문). 컨테이너 이미지의 `CMD`가 `alembic upgrade head`를
+  먼저 실행한 뒤 Uvicorn을 띄우도록 되어 있어 빈 DB에서 새로 시작해도 자동으로 최신 스키마가 적용됩니다.
+  그래도 이 에러가 나면 `docker compose logs app`에서 `alembic upgrade head` 단계가 실패했는지 먼저 확인하세요.
 - **`docker compose up`인데 `unable to get image` / `port already in use`** → Docker Desktop이
   꺼져있거나(먼저 실행), 이전 컨테이너가 포트를 물고 안 놔주는 경우(`docker compose down` 후 재시도)입니다.
 - **`.env`를 새로 복사했더니 LLM 모델명이 다시 32b로 돌아옴** → `.env.example`의 기본값이 32b라서
@@ -86,7 +93,11 @@ docker compose up -d --force-recreate app
 http://localhost:8000
 ```
 
-## 방법 B — 호스트에 직접 설치 (참고용 기록, 지금은 안 씀)
+## 방법 B — 호스트에 직접 설치 (지금 실제로 쓰는 방식)
+
+인프라(Qdrant/PostgreSQL/Ollama)는 Docker로, **앱은 로컬 venv에서 직접** 실행합니다.
+venv는 프로젝트 폴더 밖 짧은 경로(예: `C:\v\rag_latest`)에 두세요 — 프로젝트 폴더 안에 두면
+Windows 260자 경로 제한(WinError 206, torch/paddle 설치 시 특히)에 걸립니다.
 
 ## 0. Docker Desktop 준비
 
@@ -148,8 +159,8 @@ copy .env.example .env
 ## 4. 인프라(Qdrant / PostgreSQL / Ollama) 기동
 
 ```powershell
-docker-compose up -d qdrant postgres ollama
-docker-compose ps   # 3개 다 Up 상태인지 확인
+docker compose up -d qdrant postgres ollama
+docker compose ps   # 3개 다 Up 상태인지 확인
 ```
 
 ## 5. Ollama에 LLM 모델 받기
@@ -157,8 +168,8 @@ docker-compose ps   # 3개 다 Up 상태인지 확인
 **주의**: GPU가 안 잡히는 환경에서 32B 모델은 CPU 메모리 부족(OOM)으로 실패합니다. 7B로 시작하세요.
 
 ```powershell
-docker-compose exec ollama ollama pull qwen2.5:7b
-docker-compose exec ollama ollama list   # 잘 받아졌는지 확인
+docker compose exec ollama ollama pull qwen2.5:7b
+docker compose exec ollama ollama list   # 잘 받아졌는지 확인
 ```
 
 `.env`의 `LLM_MODEL_NAME=qwen2.5:7b` 로 맞춰주세요.

@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # --- 워커 실패 복구 ---
     worker_max_retries: int = 3  # 이 횟수를 넘게 실패하면 더 이상 자동 재시도 안 하고 FAILED로 확정
     worker_claim_batch_size: int = 4  # 워커 하나가 한 번에 찜할 문서 수. 여러 워커가 일을 나눠 갖게 한다.
+    pipeline_round_document_limit: int = 16  # 추출→청킹→임베딩 한 순환의 문서 상한. Qwen 재로딩과 대기시간의 균형값.
     embedding_claim_batch_size: int = 32  # 실제 인코딩 1배치와 같게 유지해 중간 커밋 후 중복 선점을 방지
     worker_stale_after_minutes: int = 30  # 이 시간 동안 진행률 갱신이 없던 EXTRACTING 작업은 자동 회수
 

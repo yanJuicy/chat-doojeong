@@ -1,0 +1,9 @@
+{
+  "_note": "6차 홀드아웃: 30페이지 카탈로그(23페이지 MS-023에 특이사항 은닉) + 손상/빈 문서는 처리 안정성만 확인(질문 없음).",
+  "questions": [
+    {"question": "메가스토어 창립 20주년 기념 한정판 모델의 시리얼 인증번호가 뭐야?", "expected_filename": "holdout_R_long_catalog", "expected_terms": ["MGS-ANV-20-8841"]},
+    {"question": "MS-023의 고유 시리얼 인증번호를 알려줘", "expected_filename": "holdout_R_long_catalog", "expected_terms": ["MGS-ANV-20-8841"]},
+    {"question": "MS-023의 용량과 소비전력을 알려줘", "expected_filename": "holdout_R_long_catalog", "expected_terms": []},
+    {"question": "메가스토어 카탈로그에 30주년 기념판도 있어?", "expected_filename": null, "expected_terms": []}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "_note": "2차 홀드아웃(그린웨이브산업, 산업용 펌프, 표 구조 포함). 1차(선다인테크)와 도메인 무관.",
+  "questions": [
+    {"question": "그린웨이브산업의 이중 메카니컬 씰 기능이 뭐야?", "expected_filename": "holdout_D_company_intro", "expected_terms": ["누설"]},
+    {"question": "2차 백업 밀봉 기능이 있는 회사가 그린웨이브산업 맞아?", "expected_filename": "holdout_D_company_intro", "expected_terms": ["그린웨이브산업"]},
+    {"question": "GW-100과 GW-500 중 유량이 더 큰 건 뭐야?", "expected_filename": null, "expected_terms": []},
+    {"question": "GW-250의 소비전력은 얼마야?", "expected_filename": "holdout_E_spec_table", "expected_terms": ["18.5"]},
+    {"question": "GW-250의 ISO 인증번호만 알려줘", "expected_filename": "holdout_F_certificate", "expected_terms": ["ISO9001-GW-77042"]},
+    {"question": "그린웨이브산업의 창업 연도가 언제야?", "expected_filename": null, "expected_terms": []},
+    {"question": "GW-100의 모터 회전수는 얼마나 돼?", "expected_filename": null, "expected_terms": []},
+    {"question": "그린웨이브산업은 이중 메카니컬 씰 대신 단일 패킹글랜드만 쓰는 회사 맞지?", "expected_filename": null, "expected_terms": []},
+    {"question": "펌프 조립 공정에서 베어링 압입 다음 단계가 뭐야?", "expected_filename": "holdout_D_company_intro", "expected_terms": ["수압 테스트"]},
+    {"question": "GW-500의 유량이랑 양정 둘 다 알려줘", "expected_filename": "holdout_E_spec_table", "expected_terms": ["300", "60"]}
+  ]
+}

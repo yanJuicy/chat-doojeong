@@ -40,9 +40,6 @@ from .api_models import (
     ChatSource,
     CrawlRequest,
     CrawlResponse,
-    EvalQuestionResult,
-    EvalRequest,
-    EvalResponse,
     RunWorkersResponse,
     UpdateLabelsRequest,
     UploadResponse,
@@ -58,10 +55,6 @@ from .core.label_matching import expand_search_query
 from .core.qdrant_store import QdrantVectorStore
 from .core.qwen_ollama_provider import QwenOllamaProvider, build_cross_lingual_system_prompt
 from .core.retrieval_pipeline import rerank_candidates, retrieve_candidates
-from .core.retrieval_trace import (
-    expected_stage_ranks as calculate_expected_stage_ranks,
-    find_drop_stage,
-)
 from .core.answer_prompt import build_grounded_answer_prompt, build_grounded_system_prompt
 from .core.structured_chunker import StructuredChunker
 from .core.similarity_utils import cosine_similarity
@@ -105,6 +98,8 @@ async def lifespan(app: FastAPI):
     app.state.question_cache = []
     # PaddleOCR은 로딩이 무겁고 안 쓰는 배포도 있으므로, extraction_worker 실행 시점에 지연 로딩한다.
     app.state.extractor_registry = ExtractorRegistry()
+    # DB의 SKIP LOCKED는 중복 선점만 막으므로, GPU 파이프라인은 별도 잠금으로 직렬화한다.
+    app.state.worker_lock = asyncio.Lock()
 
     _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -287,49 +282,88 @@ async def run_workers(request: Request, background_tasks: BackgroundTasks) -> Ru
 
 async def _run_workers_in_background(app: FastAPI) -> None:
     """run_workers의 실제 처리부. 응답을 이미 보낸 뒤 백그라운드에서 실행된다."""
-    try:
-        n_extracted = 0
-        while True:
-            batch_count = await extraction_worker.process_pending_documents(
-                async_session_factory, app.state.extractor_registry
+    worker_lock = getattr(app.state, "worker_lock", None)
+    if worker_lock is None:
+        worker_lock = asyncio.Lock()
+        app.state.worker_lock = worker_lock
+
+    # 겹친 요청을 버리지 않고 직렬화한다. 앞선 실행이 끝나는 순간 새 문서가 들어와도
+    # 대기 중인 실행이 DB를 한 번 더 확인하므로 작업이 남겨지는 경쟁 조건을 피한다.
+    async with worker_lock:
+        try:
+            n_extracted = 0
+            n_chunked = 0
+            n_embedded = 0
+            round_number = 0
+            claim_size = max(1, settings.worker_claim_batch_size)
+            batches_per_round = max(
+                1,
+                (settings.pipeline_round_document_limit + claim_size - 1) // claim_size,
             )
-            n_extracted += batch_count
-            if batch_count == 0:
-                break
 
-        n_chunked = 0
-        while True:
-            async with async_session_factory() as session:
-                batch_count = await chunking_worker.process_pending_documents(
-                    session,
-                    app.state.chunker,
-                    app.state.intent_classifier,
-                    app.state.embedding_provider,
-                    app.state.llm_provider,
+            while True:
+                round_number += 1
+                round_extracted = 0
+                for _ in range(batches_per_round):
+                    batch_count = await extraction_worker.process_pending_documents(
+                        async_session_factory, app.state.extractor_registry
+                    )
+                    round_extracted += batch_count
+                    if batch_count == 0:
+                        break
+
+                round_chunked = 0
+                for _ in range(batches_per_round):
+                    async with async_session_factory() as session:
+                        batch_count = await chunking_worker.process_pending_documents(
+                            session,
+                            app.state.chunker,
+                            app.state.intent_classifier,
+                            app.state.embedding_provider,
+                            app.state.llm_provider,
+                        )
+                    round_chunked += batch_count
+                    if batch_count == 0:
+                        break
+
+                # 최대 16개 문서의 라벨 생성을 마친 뒤 한 번만 Qwen을 내린다.
+                # 작은 배치마다 모델을 재로딩하지 않으면서 먼저 끝난 문서는 임베딩으로 넘긴다.
+                if round_chunked > 0:
+                    await app.state.llm_provider.unload()
+
+                round_embedded = 0
+                while True:
+                    async with async_session_factory() as session:
+                        batch_count = await embedding_worker.process_pending_chunks(
+                            session, app.state.embedding_provider, app.state.vector_store
+                        )
+                    round_embedded += batch_count
+                    if batch_count == 0:
+                        break
+
+                n_extracted += round_extracted
+                n_chunked += round_chunked
+                n_embedded += round_embedded
+                logger.info(
+                    "파이프라인 순환 %d 완료: 추출 %d, 청킹 %d, 임베딩 %d",
+                    round_number,
+                    round_extracted,
+                    round_chunked,
+                    round_embedded,
                 )
-            n_chunked += batch_count
-            if batch_count == 0:
-                break
 
-        # 라벨 보강에 사용한 Qwen이 keep_alive 상태로 남으면 8GB GPU에서 BGE-M3가 CPU로
-        # 밀릴 수 있다. 청킹이 모두 끝난 시점에 답변 모델을 내리고 임베딩에 VRAM을 양보한다.
-        if n_chunked > 0:
-            await app.state.llm_provider.unload()
+                if round_extracted == 0 and round_chunked == 0 and round_embedded == 0:
+                    break
 
-        n_embedded = 0
-        while True:
-            async with async_session_factory() as session:
-                batch_count = await embedding_worker.process_pending_chunks(
-                    session, app.state.embedding_provider, app.state.vector_store
-                )
-            n_embedded += batch_count
-            if batch_count == 0:
-                break
-
-        logger.info("백그라운드 워커 실행 완료: 추출 %d, 청킹 %d, 임베딩 %d", n_extracted, n_chunked, n_embedded)
-    except Exception as exc:  # noqa: BLE001
-        # 백그라운드 태스크 안 예외는 어디에도 안 알려지고 조용히 사라지므로, 반드시 여기서 로그를 남긴다.
-        logger.error("백그라운드 워커 실행 중 예외 발생: %s", exc, exc_info=True)
+            logger.info(
+                "백그라운드 워커 실행 완료: 추출 %d, 청킹 %d, 임베딩 %d",
+                n_extracted,
+                n_chunked,
+                n_embedded,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # 백그라운드 태스크 안 예외는 어디에도 안 알려지고 조용히 사라지므로, 반드시 여기서 로그를 남긴다.
+            logger.error("백그라운드 워커 실행 중 예외 발생: %s", exc, exc_info=True)
 
 
 @app.get("/api/documents/{document_id}/file")
@@ -660,123 +694,9 @@ async def get_document_chunks(document_id: str) -> dict:
         return {"summary": summary, "items": items}
 
 
-@app.post("/api/debug/evaluate", response_model=EvalResponse)
-async def evaluate_questions(request: Request, body: EvalRequest) -> EvalResponse:
-    """
-    질문 여러 개를 실제 /api/chat과 동일한 파이프라인으로 그대로 돌려서, 실제 검색 유사도·
-    (정답 문서를 알려준 경우) 적중 여부·단계별 소요시간을 한 번에 비교표로 만든다.
-
-    이론적인 분포(각도/히스토그램)가 아니라, 지금 설정(.env)으로 실제 질문을 돌렸을 때
-    나오는 실측값이라서, 설정을 바꾼 뒤 다시 돌려서 전/후를 근거 있게 비교하는 용도로 쓴다.
-    """
-    results: list[EvalQuestionResult] = []
-
-    for eq in body.questions:
-        chat_body = ChatRequest(question=eq.question)
-        top_similarity: float | None = None
-        result_document_ids: list[str] = []
-        retrieval_trace: list[dict] = []
-        stage_timings: list[dict] = []
-        answer_preview = ""
-        full_answer = ""
-        failed = False
-
-        async for kind, payload in _run_chat_pipeline(
-            request,
-            chat_body,
-            collect_retrieval_trace=True,
-        ):
-            if kind == "retrieval_info":
-                top_similarity = payload["top_similarity"]
-                result_document_ids = payload["result_document_ids"]
-                retrieval_trace = payload.get("retrieval_trace", [])
-            elif kind == "timing":
-                stage_timings.append(payload)
-            elif kind == "error":
-                answer_preview = f"[오류: {payload['stage']} 단계 - {payload['message']}]"
-                stage_timings = payload.get("stage_timings", stage_timings)
-                retrieval_trace = payload.get("retrieval_trace", retrieval_trace)
-                failed = True
-            elif kind == "result":
-                full_answer = payload.answer
-                answer_preview = full_answer[:150]
-                stage_timings = payload.stage_timings
-
-        expected_hit: bool | None = None
-        expected_rank: int | None = None
-        reciprocal_rank: float | None = None
-        stage_ranks: dict[str, int | None] = {}
-        drop_stage: str | None = None
-        if eq.expected_filename:
-            async with async_session_factory() as session:
-                docs_result = await session.execute(
-                    select(Document).where(Document.filename.ilike(f"%{eq.expected_filename}%"))
-                )
-                expected_document_ids = {d.id for d in docs_result.scalars().all()}
-            stage_ranks = calculate_expected_stage_ranks(retrieval_trace, expected_document_ids)
-            drop_stage = find_drop_stage(retrieval_trace, expected_document_ids)
-            if not failed:
-                expected_hit = bool(expected_document_ids & set(result_document_ids))
-                matching_ranks = [
-                    index + 1
-                    for index, document_id in enumerate(result_document_ids)
-                    if document_id in expected_document_ids
-                ]
-                if matching_ranks:
-                    expected_rank = min(matching_ranks)
-                    reciprocal_rank = round(1.0 / expected_rank, 4)
-
-        normalized_answer = full_answer.casefold()
-        matched_terms = [term for term in eq.expected_terms if term.casefold() in normalized_answer]
-        missing_terms = [term for term in eq.expected_terms if term.casefold() not in normalized_answer]
-        expected_terms_hit = None if not eq.expected_terms else not missing_terms
-
-        results.append(
-            EvalQuestionResult(
-                question=eq.question,
-                answer_preview=answer_preview,
-                top_similarity=top_similarity,
-                expected_filename=eq.expected_filename,
-                expected_hit=expected_hit,
-                expected_rank=expected_rank,
-                reciprocal_rank=reciprocal_rank,
-                expected_terms_hit=expected_terms_hit,
-                matched_terms=matched_terms,
-                missing_terms=missing_terms,
-                total_seconds=round(sum(t["seconds"] for t in stage_timings), 3),
-                stage_timings=stage_timings,
-                retrieval_trace=retrieval_trace,
-                expected_stage_ranks=stage_ranks,
-                drop_stage=drop_stage,
-            )
-        )
-
-    avg_total = round(sum(r.total_seconds for r in results) / len(results), 3) if results else 0.0
-    similarities = [r.top_similarity for r in results if r.top_similarity is not None]
-    avg_similarity = round(sum(similarities) / len(similarities), 4) if similarities else None
-    hits = [r.expected_hit for r in results if r.expected_hit is not None]
-    hit_rate = round(sum(hits) / len(hits), 4) if hits else None
-    reciprocal_ranks = [r.reciprocal_rank or 0.0 for r in results if r.expected_filename is not None]
-    mean_reciprocal_rank = (
-        round(sum(reciprocal_ranks) / len(reciprocal_ranks), 4) if reciprocal_ranks else None
-    )
-    term_hits = [r.expected_terms_hit for r in results if r.expected_terms_hit is not None]
-    answer_term_hit_rate = round(sum(term_hits) / len(term_hits), 4) if term_hits else None
-
-    return EvalResponse(
-        results=results,
-        avg_total_seconds=avg_total,
-        avg_top_similarity=avg_similarity,
-        hit_rate=hit_rate,
-        mean_reciprocal_rank=mean_reciprocal_rank,
-        answer_term_hit_rate=answer_term_hit_rate,
-    )
-
-
 async def _run_chat_pipeline(
     request: Request,
     body: ChatRequest,
-    collect_retrieval_trace: bool = False,
 ):
     """
     질문에 대해 검색 -> 리랭킹 -> LLM 답변 생성까지 전체 파이프라인을 수행하는 제너레이터.
@@ -799,7 +719,6 @@ async def _run_chat_pipeline(
 
     current_stage = "초기화"
     stage_timings: list[dict] = []
-    retrieval_trace: list[dict] | None = [] if collect_retrieval_trace else None
 
     try:
         embedding_provider: BgeM3EmbeddingProvider = request.app.state.embedding_provider
@@ -857,7 +776,7 @@ async def _run_chat_pipeline(
             None,
         )
 
-        if exact_match_entry is not None and not collect_retrieval_trace:
+        if exact_match_entry is not None:
             logger.info("질문 캐시 히트 (완전 일치): %s", body.question)
             yield (
                 "result",
@@ -893,7 +812,6 @@ async def _run_chat_pipeline(
             query_sparse,
             vector_store,
             reranker,
-            retrieval_trace,
         )
         candidates = candidate_batch.candidates
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
@@ -911,20 +829,9 @@ async def _run_chat_pipeline(
             body.question,
             candidate_batch,
             reranker,
-            retrieval_trace,
         )
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
-
-        # 검색 결과 요약(최종 컨텍스트 1등 유사도 + 문서ID 목록) — 평가 도구가 재사용하는 정보.
-        # 별도로 검색을 다시 안 돌리고 이 이벤트 하나로 충분하게 만드는 게 핵심.
-        retrieval_info = {
-            "top_similarity": round(reranked[0].score, 4) if reranked else None,
-            "result_document_ids": [r.metadata.get("document_id") for r in reranked],
-        }
-        if retrieval_trace is not None:
-            retrieval_info["retrieval_trace"] = retrieval_trace
-        yield ("retrieval_info", retrieval_info)
 
         # 신규 인덱스는 Qdrant payload에 파일명을 함께 저장한다. 예전 인덱스처럼
         # 파일명이 없는 결과만 PostgreSQL에서 보충해 질문당 중복 조회를 피한다.
@@ -1064,8 +971,6 @@ async def _run_chat_pipeline(
     except Exception as exc:  # noqa: BLE001
         logger.error("답변 생성 파이프라인 실패 (단계: %s): %s", current_stage, exc, exc_info=True)
         error_payload = {"stage": current_stage, "message": str(exc), "stage_timings": stage_timings}
-        if retrieval_trace is not None:
-            error_payload["retrieval_trace"] = retrieval_trace
         yield ("error", error_payload)
 
 
@@ -1098,8 +1003,6 @@ async def chat_stream(request: Request, question: str):
                 yield f"data: {json.dumps({'timing': payload})}\n\n"
             elif kind == "token":
                 yield f"data: {json.dumps({'token': payload})}\n\n"
-            elif kind == "retrieval_info":
-                pass  # 콘솔 채팅 화면에서는 안 씀 (평가 도구에서만 파이프라인을 직접 소비해서 사용)
             elif kind == "error":
                 yield f"data: {json.dumps({'stage': 'error', 'error': payload})}\n\n"
             else:  # kind == "result"

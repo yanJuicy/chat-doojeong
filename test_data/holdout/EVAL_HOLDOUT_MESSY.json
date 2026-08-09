@@ -1,0 +1,20 @@
+{
+  "_note": "5차 홀드아웃: 손글씨(K)/사진+캡션(L)/도면(M)/한영일혼용(N)/글씨크기+배치 중구난방(O). K는 OCR 자체가 상당히 손상돼 있어 실패해도 파이프라인 문제가 아니라 OCR 한계일 수 있음(정답표에 confidence 표시).",
+  "questions": [
+    {"question": "아쿠아뷰 정수기 필터의 가격이 얼마로 잠정 결정됐어?", "expected_filename": "holdout_K_handwriting", "expected_terms": ["45000"]},
+    {"question": "필터 교체 주기는 몇 개월로 확정했어?", "expected_filename": "holdout_K_handwriting", "expected_terms": []},
+    {"question": "담당자 연락처가 몇 번이야?", "expected_filename": "holdout_K_handwriting", "expected_terms": []},
+    {"question": "모던라이트 밝기 자동조절 센서의 기능이 뭐야?", "expected_filename": "holdout_L_photo_caption", "expected_terms": ["조도"]},
+    {"question": "ML-D200의 정격소비전력은 얼마야?", "expected_filename": "holdout_L_photo_caption", "expected_terms": ["24W"]},
+    {"question": "모던라이트의 A/S 보증기간이 몇 년이야?", "expected_filename": null, "expected_terms": []},
+    {"question": "HB-BR440 브래킷의 재질이 뭐야?", "expected_filename": "holdout_M_drawing", "expected_terms": ["SUS304"]},
+    {"question": "HB-BR440의 전장이랑 두께 둘 다 알려줘", "expected_filename": "holdout_M_drawing", "expected_terms": ["320mm", "4.5mm"]},
+    {"question": "HB-BR440 브래킷의 무게는 얼마나 돼?", "expected_filename": null, "expected_terms": []},
+    {"question": "글로벌파츠코리아 부품의 모델코드가 뭐야?", "expected_filename": "holdout_N_multilang", "expected_terms": ["GPK-450X-JP"]},
+    {"question": "이 부품의 보증기간이 몇 개월이야?", "expected_filename": "holdout_N_multilang", "expected_terms": ["24개월"]},
+    {"question": "이 부품의 제조원가는 얼마야?", "expected_filename": null, "expected_terms": []},
+    {"question": "한빛전자 HBE-990의 할인가가 얼마야?", "expected_filename": "holdout_O_chaotic", "expected_terms": ["99000"]},
+    {"question": "HBE-990은 재입고가 언제 예정이야?", "expected_filename": "holdout_O_chaotic", "expected_terms": ["8월"]},
+    {"question": "한빛전자의 매장 위치가 어디야?", "expected_filename": null, "expected_terms": []}
+  ]
+}

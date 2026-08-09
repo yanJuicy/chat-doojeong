@@ -1,0 +1,13 @@
+{
+  "_note": "3차 홀드아웃(모래언덕, 세탁구독 서비스, Q&A/FAQ 구조). 1·2차와 도메인·문서구조 둘 다 무관.",
+  "questions": [
+    {"question": "모래언덕 스탠다드 요금제는 한 달에 얼마야?", "expected_filename": "holdout_G_faq", "expected_terms": ["49,000"]},
+    {"question": "월 49,000원짜리 요금제가 스탠다드 맞아?", "expected_filename": "holdout_G_faq", "expected_terms": ["스탠다드"]},
+    {"question": "라이트 요금제랑 패밀리 요금제 중에 뭐가 더 비싸?", "expected_filename": null, "expected_terms": []},
+    {"question": "세탁물은 수거 후 최대 며칠 안에 오나요?", "expected_filename": "holdout_G_faq", "expected_terms": ["48시간"]},
+    {"question": "모래언덕은 해지할 때 위약금이 있는 회사 맞지?", "expected_filename": null, "expected_terms": []},
+    {"question": "모래언덕 고객센터 전화번호가 뭐야?", "expected_filename": null, "expected_terms": []},
+    {"question": "패밀리 요금제는 주에 몇 번 방문해?", "expected_filename": "holdout_G_faq", "expected_terms": ["2회"]},
+    {"question": "가죽 제품 세탁도 기본 구독 요금에 포함되나요?", "expected_filename": "holdout_G_faq", "expected_terms": ["추가"]}
+  ]
+}

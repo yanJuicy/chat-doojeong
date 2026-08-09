@@ -1,0 +1,15 @@
+{
+  "_note": "4차 홀드아웃: 문서 '형식' 다양화 - H=스캔PDF(OCR 강제), I=DOCX(표 포함), J=직접 JPG업로드. 전부 처음 쓰는 내용.",
+  "questions": [
+    {"question": "테라클린 RO필터의 기능이 뭐야?", "expected_filename": "holdout_H_scanned", "expected_terms": ["세균", "중금속"]},
+    {"question": "정수기 설치 공정에서 필터 장착 다음 단계가 뭐야?", "expected_filename": "holdout_H_scanned", "expected_terms": ["누수"]},
+    {"question": "테라클린은 역삼투압 대신 활성탄 필터링만 쓰는 회사 맞지?", "expected_filename": null, "expected_terms": []},
+    {"question": "테라클린 고객센터 운영시간이 어떻게 돼?", "expected_filename": null, "expected_terms": []},
+    {"question": "OG-Run100과 OG-Run500 중 최대하중이 더 큰 건 뭐야?", "expected_filename": "holdout_I_orcagym", "expected_terms": ["OG-Run500"]},
+    {"question": "OG-Run300의 안전인증번호만 알려줘", "expected_filename": "holdout_I_orcagym", "expected_terms": ["SF-GYM-2024-5567"]},
+    {"question": "오르카짐 충격흡수 데크의 기능이 뭐야?", "expected_filename": "holdout_I_orcagym", "expected_terms": ["부상"]},
+    {"question": "블루윙드론 BW-X300의 최대비행시간이랑 최대속도 둘 다 알려줘", "expected_filename": "holdout_J_bluewing", "expected_terms": ["32분", "65km/h"]},
+    {"question": "블루윙드론의 배터리 완충 시간은 얼마나 걸려?", "expected_filename": null, "expected_terms": []},
+    {"question": "저배터리 자동복귀 기능이 있는 회사가 블루윙드론 맞아?", "expected_filename": "holdout_J_bluewing", "expected_terms": ["블루윙드론"]}
+  ]
+}

@@ -52,22 +52,41 @@ def apply_relevance_floor_with_safe_rescue(
     top_k: int,
     explicit_document_ids: Collection[str] = (),
 ) -> tuple[list[SearchResult], bool]:
-    """고정 floor를 우선 적용하고, 전멸한 무라벨 질문만 제한적으로 구조한다.
+    """고정 floor를 우선 적용하고, 전멸한 질문만 제한적으로 구조한다.
 
-    명시 회사/제품 라벨이 있는 질문은 잘못된 다른 엔티티의 문서를 구조하면
-    환각으로 이어질 수 있어 기존처럼 빈 결과를 유지한다. 라벨이 없는 질문도
-    문서명에서 대상 핵심어가, 본문에서 속성 핵심어가 각각 확인되는 후보만
-    RRF 순위로 구조한다.
+    명시 회사/제품 라벨이 있는 질문은 라벨로 확정된 문서 ID 안에서만 RRF
+    후보를 구조한다. 따라서 cross-encoder의 질문별 절대점수 스케일이 낮아도
+    정답 라벨 문서가 전멸하지 않으면서, 다른 엔티티 문서가 섞이지 않는다.
+    라벨이 없는 질문은 문서명에서 대상 핵심어가, 본문에서 속성 핵심어가
+    각각 확인되는 후보만 구조한다.
     """
     filtered = [candidate for candidate in reranked if candidate.score >= floor]
-    if filtered or not reranked or explicit_document_ids:
+    if not reranked:
+        return filtered, False
+
+    fused = reciprocal_rank_fuse(first_stage, reranked)
+    if explicit_document_ids:
+        allowed_document_ids = {str(document_id) for document_id in explicit_document_ids if document_id}
+        preferred_candidates = [
+            candidate
+            for candidate in fused
+            if str(candidate.metadata.get("document_id") or "") in allowed_document_ids
+        ][: min(3, max(0, top_k))]
+        existing_chunk_ids = {candidate.chunk_id for candidate in filtered}
+        rescued = [candidate for candidate in preferred_candidates if candidate.chunk_id not in existing_chunk_ids]
+        if not rescued:
+            return filtered, False
+        combined = [*filtered, *rescued]
+        combined.sort(key=lambda candidate: candidate.score, reverse=True)
+        return combined, True
+
+    if filtered:
         return filtered, False
 
     terms = query_terms(query)
     if not terms:
         return [], False
 
-    fused = reciprocal_rank_fuse(first_stage, reranked)
     rescued: list[SearchResult] = []
     for candidate in fused:
         filename_terms = match_query_terms(terms, str(candidate.metadata.get("filename") or ""))

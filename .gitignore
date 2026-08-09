@@ -12,4 +12,5 @@ uploaded_files/
 .mcp.json
 .claude/settings.local.json
 *.zip
+backups/
 

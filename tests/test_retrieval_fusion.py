@@ -113,6 +113,62 @@ class RetrievalFusionTests(unittest.TestCase):
         self.assertFalse(rescued)
         self.assertEqual(selected, [])
 
+    def test_explicit_entity_floor_empty_rescues_only_matching_document(self) -> None:
+        matching = _result(
+            "matching-process",
+            "절연테스트 다음 단계는 출하검사",
+            0.04,
+            filename="선다인테크 제조공정.pdf",
+            document_id="sundyne-doc",
+        )
+        other = _result(
+            "other-process",
+            "절연테스트 다음 단계는 포장",
+            0.05,
+            filename="다른 회사 제조공정.pdf",
+            document_id="other-doc",
+        )
+
+        selected, rescued = apply_relevance_floor_with_safe_rescue(
+            "제조공정에서 절연테스트 다음 단계가 뭐야?",
+            [matching, other],
+            [other, matching],
+            floor=0.2,
+            top_k=5,
+            explicit_document_ids={"sundyne-doc"},
+        )
+
+        self.assertTrue(rescued)
+        self.assertEqual([candidate.chunk_id for candidate in selected], ["matching-process"])
+
+    def test_explicit_entity_is_preserved_when_unrelated_candidate_passes_floor(self) -> None:
+        matching = _result(
+            "matching-range",
+            "최대 작업 반경 1,184 mm",
+            0.04,
+            filename="별하자동화 KX-41.pdf",
+            document_id="byeolha-doc",
+        )
+        unrelated = _result(
+            "unrelated-range",
+            "RB 로봇 작업 반경 1,300 mm",
+            0.8,
+            filename="RB 매뉴얼.pdf",
+            document_id="rb-doc",
+        )
+
+        selected, rescued = apply_relevance_floor_with_safe_rescue(
+            "별하 로봇 팔은 몇 mm까지 뻗나?",
+            [matching, unrelated],
+            [unrelated, matching],
+            floor=0.2,
+            top_k=5,
+            explicit_document_ids={"byeolha-doc"},
+        )
+
+        self.assertTrue(rescued)
+        self.assertEqual({candidate.chunk_id for candidate in selected}, {"matching-range", "unrelated-range"})
+
     def test_candidate_without_filename_identity_is_not_rescued(self) -> None:
         candidate = _result("generic", "주행 속도 최대 1.0m/s", 0.01, filename="제품 사양.pdf")
 

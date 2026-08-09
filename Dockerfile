@@ -26,6 +26,13 @@ RUN pip install --no-cache-dir "paddlex[ocr]"
 RUN pip install --no-cache-dir --force-reinstall paddlepaddle==3.2.2
 
 COPY app/ ./app
+# DB 스키마는 create_all()이 아니라 Alembic이 관리한다 (기존 테이블 변경 불가 문제 때문).
+# 컨테이너로 앱을 띄우는 경로(docker-compose.yml의 --profile container-app)에서도
+# 빈 DB에서 곧바로 시작할 수 있도록 마이그레이션 파일을 함께 넣는다.
+COPY alembic.ini ./
+COPY migrations/ ./migrations
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 시작 전에 항상 alembic upgrade head를 먼저 실행한다 — 새 컴퓨터의 빈 DB든,
+# 컬럼이 추가된 기존 DB든 이 한 줄로 동일하게 최신 스키마를 보장한다.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

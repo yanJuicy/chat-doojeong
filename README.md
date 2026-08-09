@@ -59,14 +59,13 @@ python scripts/audit_pdf_pages.py --summary-only "C:\path\to\pdf-folder"
 ## 핵심 API
 
 - `POST /api/documents/upload`: 파일과 다중 라벨 등록
-- `POST /api/admin/run-workers`: 백그라운드 파이프라인 실행
+- `POST /api/admin/run-workers`: 기본 16문서 단위로 추출→청킹→임베딩을 순환하는 백그라운드 파이프라인 실행
 - `GET /api/documents/{id}/status`: 처리 상태와 추출 품질 확인
 - `GET /api/documents/{id}/chunks`: 페이지·표·이미지별 청크 확인
 - `PUT /api/documents/{id}/labels`: 라벨 수정 후 자동 재색인
 - `POST /api/documents/{id}/reextract`: 기존 라벨·원본을 보존하고 OCR부터 재처리
 - `POST /api/chat`: 일반 답변
 - `GET /api/chat/stream`: SSE 토큰 스트리밍
-- `POST /api/debug/evaluate`: 정답 문서 순위·MRR·필수어 포함률·단계별 시간 평가
 
 ## 이번 개선 사항
 

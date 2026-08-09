@@ -39,6 +39,25 @@ _GROUNDED_SYSTEM_RULES = (
 )
 
 
+def build_question_specific_instruction(question: str) -> str:
+    """Return generic format guidance implied by the wording of the question."""
+
+    normalized = question.casefold()
+    instructions: list[str] = []
+    if any(cue in normalized for cue in ("순서", "단계", "공정", "절차")):
+        instructions.append(
+            "이 질문은 순서나 공정을 요구합니다. 참고에 단계 목록이 있으면 요약 설명으로 "
+            "대체하지 말고 첫 단계부터 마지막 단계까지 빠짐없이 번호로 답하세요."
+        )
+    if any(cue in normalized for cue in ("차이", "얼마나 더", "몇 배", "합계", "총합")):
+        instructions.append(
+            "이 질문은 수치 비교나 계산을 요구합니다. 계산에 필요한 수치가 참고에 모두 있으면 "
+            "참고의 수치와 단위만 사용해 간단한 산식과 결과를 제시하고, 부족하면 추정하지 마세요. "
+            "특히 차이를 묻는 경우 답에 '큰 값 - 작은 값 = 결과' 형식의 계산식을 반드시 포함하세요."
+        )
+    return " ".join(instructions) or "질문에서 별도의 답변 형식을 요구하지 않았습니다."
+
+
 def find_unverified_question_terms(*, question: str, context_text: str) -> list[str]:
     """Return substantial query terms not literally present in the references.
 
@@ -80,10 +99,13 @@ def build_grounded_answer_prompt(*, question: str, context_text: str) -> str:
         )
     else:
         audit_text = "참고 자료에서 확인되지 않은 긴 핵심 표현이 감지되지 않았습니다."
+    question_instruction = build_question_specific_instruction(question)
     return (
         f"[답변 규칙]\n{_GROUNDED_ANSWER_RULES}\n\n"
         f"[질문 표현 대조 결과]\n{audit_text}\n\n"
-        f"[참고 자료]\n{references}\n\n[사용자 질문]\n{question}"
+        f"[참고 자료]\n{references}\n\n"
+        f"[사용자 질문]\n{question}\n\n"
+        f"[이 질문에서 반드시 수행할 작업]\n{question_instruction}"
     )
 
 

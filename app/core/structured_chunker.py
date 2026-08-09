@@ -50,6 +50,19 @@ _MIN_HEADINGS_TO_TRIGGER = 2
 # 이 토큰 수 미만인 연속 섹션은 인접 섹션과 합친다 (너무 잘게 쪼개지는 것 방지).
 _MIN_MERGE_TOKENS = 100
 
+# PyMuPDF가 표를 줄 단위로 풀어낼 때 "7.3 kg", "12 kN 예압 인가" 같은 값도
+# 줄 맨 앞에 온다. 번호형 제목 정규식만 적용하면 이를 7.3절/12절 제목으로 오인하고,
+# 다음 제목 전까지 내용이 없을 경우 값 자체가 청크에서 사라진다. 단위가 바로 뒤따르는
+# 수치 행은 섹션 번호가 아니라 측정값으로 우선 판정한다.
+_MEASUREMENT_LINE_PATTERN = re.compile(
+    r"^[±+\-]?\d+(?:[.,]\d+)*\s*"
+    r"(?:%|°[CF]|kg|g|mg|t|mm|cm|km|m|in|ft|m/s|km/h|V|kV|A|mA|Ah|W|kW|MW|"
+    r"Hz|kHz|MHz|N|kN|Pa|kPa|MPa|bar|rpm|ms|s|min|h)\b",
+    re.IGNORECASE,
+)
+_MODEL_ROW_HEADING_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{0,15}[-_][A-Z0-9][A-Z0-9._/-]{0,31}$")
+_NUMERIC_TABLE_CELL_PATTERN = re.compile(r"^[±+\-]?\d+(?:[.,]\d+)*(?:\s*\S+)?$")
+
 
 # 번호/마크다운 제목이 아니어도, 이 도메인 키워드가 짧은 독립 행으로 등장하면 제목 후보로 본다
 # (예: "설치 방법", "안전 및 주의사항" 처럼 번호 없이 소제목만 던지는 매뉴얼 스타일 대응).
@@ -74,6 +87,8 @@ def is_heading_line(line: str) -> bool:
     line = line.strip()
     if not line:
         return False
+    if _MEASUREMENT_LINE_PATTERN.match(line):
+        return False
     if _matches_domain_keyword(line):
         return True
     if _ALL_CAPS_HEADING_PATTERN.fullmatch(line):
@@ -87,6 +102,102 @@ def is_heading_line(line: str) -> bool:
     if _SENTENCE_ENDING_PATTERN.search(title_part):
         return False  # "...한다." 처럼 문장으로 끝나면 절차 단계일 가능성이 높음, 제목 아님
     return True
+
+
+def demote_consecutive_empty_headings(lines: list[str], heading_indices: list[int]) -> list[int]:
+    """본문 없이 연속되는 번호형 제목 묶음을 목록 행으로 되돌린다.
+
+    PDF 텍스트의 공정 목록은 ``1. 부품검사`` 다음 줄에 곧바로
+    ``2. 기판조립``이 오는 형태가 흔하다. 이를 각각 빈 섹션 제목으로 두면
+    ``_split_into_sections``가 내용 없는 섹션을 제거하면서 공정 전체가 사라진다.
+    두 개 이상이 연속되고 사이에 실제 본문이 없을 때만 제목 판정을 해제해,
+    앞선 "제조 공정" 섹션의 목록 본문으로 함께 보존한다.
+    """
+    if len(heading_indices) < 2:
+        return heading_indices
+
+    kept: list[int] = []
+    cursor = 0
+    while cursor < len(heading_indices):
+        first_index = heading_indices[cursor]
+        if not _HEADING_PATTERN.match(lines[first_index].strip()):
+            kept.append(first_index)
+            cursor += 1
+            continue
+
+        run = [heading_indices[cursor]]
+        probe = cursor + 1
+        while probe < len(heading_indices):
+            previous = run[-1]
+            current = heading_indices[probe]
+            if not _HEADING_PATTERN.match(lines[current].strip()):
+                break
+            if any(line.strip() for line in lines[previous + 1 : current]):
+                break
+            run.append(current)
+            probe += 1
+
+        if len(run) == 1:
+            kept.append(run[0])
+        cursor = probe
+    return kept
+
+
+def merge_native_table_sections(sections: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Rejoin native-PDF table headers with model rows split as headings.
+
+    Text PDFs often expose a table as one cell per line. Compact model codes such
+    as ``GW-250`` then look like section headings, separating the column names
+    from their values. A run of at least two equally shaped numeric model rows,
+    preceded by the same number of header cells, is strong table evidence. The
+    cells are rendered as pipe-delimited rows so their column relationship stays
+    explicit for retrieval and answer generation.
+    """
+
+    def cells(content: str) -> list[str]:
+        return [line.strip() for line in content.splitlines() if line.strip()]
+
+    def model_name(path: str) -> str:
+        return path.rsplit(" > ", 1)[-1].strip()
+
+    def is_numeric_row(path: str, content: str) -> bool:
+        values = cells(content)
+        return (
+            bool(_MODEL_ROW_HEADING_PATTERN.fullmatch(model_name(path)))
+            and len(values) >= 2
+            and all(_NUMERIC_TABLE_CELL_PATTERN.fullmatch(value) for value in values)
+        )
+
+    merged: list[tuple[str, str]] = []
+    index = 0
+    while index < len(sections):
+        header_path, header_content = sections[index]
+        header_cells = cells(header_content)
+        probe = index + 1
+        row_sections: list[tuple[str, str]] = []
+        while probe < len(sections) and is_numeric_row(*sections[probe]):
+            row_sections.append(sections[probe])
+            probe += 1
+
+        row_widths = {len(cells(content)) for _, content in row_sections}
+        if (
+            len(row_sections) >= 2
+            and len(row_widths) == 1
+            and len(header_cells) == next(iter(row_widths)) + 1
+            and not all(_NUMERIC_TABLE_CELL_PATTERN.fullmatch(cell) for cell in header_cells)
+        ):
+            table_lines = [" | ".join(header_cells)]
+            table_lines.extend(
+                " | ".join([model_name(path), *cells(content)])
+                for path, content in row_sections
+            )
+            merged.append((header_path, "\n".join(table_lines)))
+            index = probe
+            continue
+
+        merged.append((header_path, header_content))
+        index += 1
+    return merged
 
 
 class StructuredChunker(BaseChunker):
@@ -119,6 +230,7 @@ class StructuredChunker(BaseChunker):
 
         lines = text_without_special_blocks.split("\n")
         heading_line_indices = [i for i, line in enumerate(lines) if is_heading_line(line)]
+        heading_line_indices = demote_consecutive_empty_headings(lines, heading_line_indices)
 
         if len(heading_line_indices) < _MIN_HEADINGS_TO_TRIGGER:
             # 구조가 뚜렷하지 않은 문서 -> 표/이미지 처리까지 포함해서 이미 잘 하고 있는 SemanticChunker에 그대로 위임
@@ -126,6 +238,7 @@ class StructuredChunker(BaseChunker):
             return await self._fallback.split(document_id, text)
 
         sections = self._split_into_sections(lines, heading_line_indices)
+        sections = merge_native_table_sections(sections)
         sections = self._merge_small_sections(sections)
 
         chunks: list[Chunk] = []

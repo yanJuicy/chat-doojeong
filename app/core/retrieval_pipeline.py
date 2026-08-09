@@ -11,23 +11,12 @@ from ..db.models import Document, DocumentChunk, DocumentLabel, DocumentStatus
 from ..db.session import async_session_factory
 from .bge_reranker import BgeRerankerV2
 from .identifier_matching import boost_exact_identifiers
-from .label_matching import label_is_question_hint
+from .label_matching import find_question_label_hints
 from .lexical_scoring import query_terms
 from .lightweight_reranker import lightweight_rerank
 from .retrieval_fusion import apply_relevance_floor_with_safe_rescue, rescue_broad_lexical_candidates
 from .retrieval_merge import merge_global_and_labeled_candidates
 from .retrieval_selection import select_diverse_results
-from .retrieval_trace import (
-    STAGE_BOOSTED,
-    STAGE_FINAL,
-    STAGE_FLOOR,
-    STAGE_GLOBAL,
-    STAGE_LABELED,
-    STAGE_MERGED,
-    STAGE_READY,
-    STAGE_RERANKED,
-    snapshot_candidates,
-)
 from .vector_store import BaseVectorStore, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -39,16 +28,11 @@ class CandidateBatch:
     labeled_document_ids: list[str]
 
 
-def _record(trace: list[dict] | None, stage: str, candidates: list[SearchResult]) -> None:
-    if trace is not None:
-        trace.append(snapshot_candidates(stage, candidates))
-
-
 async def _find_explicit_question_labels(question: str) -> list[str]:
     async with async_session_factory() as session:
         result = await session.execute(select(DocumentLabel.label).distinct())
-    matches = {label for (label,) in result.all() if label and label_is_question_hint(question, label)}
-    return sorted(matches, key=len, reverse=True)
+    labels = [label for (label,) in result.all() if label]
+    return find_question_label_hints(question, labels)
 
 
 async def _find_labeled_document_ids(labels: list[str]) -> list[str]:
@@ -80,7 +64,6 @@ async def retrieve_candidates(
     query_sparse: dict[int, float],
     vector_store: BaseVectorStore,
     reranker: BgeRerankerV2,
-    trace: list[dict] | None = None,
 ) -> CandidateBatch:
     """전역·라벨 검색을 병합하고 READY 문서의 후보만 반환한다."""
     explicit_labels = await _find_explicit_question_labels(question)
@@ -98,8 +81,6 @@ async def retrieve_candidates(
         top_k=settings.adaptive_retrieval_fetch_pool,
         filters=None,
     )
-    _record(trace, STAGE_GLOBAL, global_candidates)
-
     labeled_candidates: list[SearchResult] = []
     if labeled_document_ids:
         labeled_candidates = await vector_store.search(
@@ -108,8 +89,6 @@ async def retrieve_candidates(
             top_k=settings.adaptive_retrieval_fetch_pool,
             filters={"document_id": labeled_document_ids},
         )
-    _record(trace, STAGE_LABELED, labeled_candidates)
-
     candidate_limit = settings.adaptive_retrieval_max
     if settings.reranker_enabled and not reranker.using_cuda:
         candidate_limit = min(candidate_limit, settings.adaptive_retrieval_max_cpu)
@@ -120,8 +99,6 @@ async def retrieve_candidates(
         candidate_limit,
         query=question,
     )
-    _record(trace, STAGE_MERGED, raw_candidates)
-
     raw_document_ids = {
         result.metadata.get("document_id")
         for result in raw_candidates
@@ -150,7 +127,6 @@ async def retrieve_candidates(
         document_id = result.metadata.get("document_id")
         if document_id in ready_filenames:
             result.metadata["filename"] = ready_filenames[document_id]
-    _record(trace, STAGE_READY, candidates)
     return CandidateBatch(candidates=candidates, labeled_document_ids=labeled_document_ids)
 
 
@@ -192,7 +168,6 @@ async def rerank_candidates(
     question: str,
     batch: CandidateBatch,
     reranker: BgeRerankerV2,
-    trace: list[dict] | None = None,
 ) -> list[SearchResult]:
     """후보 전체를 점수화한 뒤 보수적 가산점·하한·다양화를 적용한다."""
     candidates = batch.candidates
@@ -212,8 +187,6 @@ async def rerank_candidates(
         )
     else:
         reranked = candidates
-    _record(trace, STAGE_RERANKED, reranked)
-
     if labeled_document_ids and settings.explicit_label_boost_weight > 0:
         labeled_id_set = set(labeled_document_ids)
         for result in reranked:
@@ -221,7 +194,6 @@ async def rerank_candidates(
                 result.score = min(1.0, result.score + settings.explicit_label_boost_weight)
         reranked.sort(key=lambda result: result.score, reverse=True)
     boost_exact_identifiers(reranked, question, settings.exact_identifier_boost_weight)
-    _record(trace, STAGE_BOOSTED, reranked)
 
     reranked, floor_rescue_applied = apply_relevance_floor_with_safe_rescue(
         question,
@@ -242,8 +214,6 @@ async def rerank_candidates(
         floor_rescue_applied = bool(reranked)
     if floor_rescue_applied:
         logger.info("리랭커 floor 전멸 안전 구조 적용: 후보=%d", len(reranked))
-    _record(trace, STAGE_FLOOR, reranked)
-
     reranked = select_diverse_results(
         reranked,
         top_k=settings.reranker_top_k,
@@ -251,5 +221,4 @@ async def rerank_candidates(
         preferred_document_ids=labeled_document_ids,
         preferred_min_count=3 if labeled_document_ids else 0,
     )
-    _record(trace, STAGE_FINAL, reranked)
     return reranked

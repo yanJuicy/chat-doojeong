@@ -1,0 +1,15 @@
+{
+  "_note": "claude가 오늘 처음 만든 완전히 새로운 가짜 문서(선다인테크, 태양광 인버터 회사)로 만든 홀드아웃 질문셋. 코드/프롬프트/기존 문서 어디에도 이 내용이 등장한 적 없음 - 과적합 여부 검증용.",
+  "questions": [
+    {"question": "선다인테크의 MPPT 컨트롤러 기능이 뭐야?", "expected_filename": "holdout_A_company_intro", "expected_terms": ["최대전력점"]},
+    {"question": "최대전력점을 추적하는 기능이 있는 회사가 선다인테크 맞아?", "expected_filename": "holdout_A_company_intro", "expected_terms": ["선다인테크"]},
+    {"question": "선다인테크는 최대출력점을 찾는 기능을 제공하나?", "expected_filename": "holdout_A_company_intro", "expected_terms": []},
+    {"question": "SD-500과 SD-3000 중 정격출력이 더 큰 건 뭐야?", "expected_filename": null, "expected_terms": []},
+    {"question": "SD-1000의 인증번호만 알려줘", "expected_filename": "holdout_C_certificate", "expected_terms": ["KC-INV-2024-88231"]},
+    {"question": "선다인테크의 본사 주소가 어디야?", "expected_filename": null, "expected_terms": []},
+    {"question": "SD-500의 배터리 용량은 얼마나 돼?", "expected_filename": null, "expected_terms": []},
+    {"question": "선다인테크는 MPPT 대신 PWM 방식만 쓰는 회사 맞지?", "expected_filename": null, "expected_terms": []},
+    {"question": "제조공정에서 절연테스트 다음 단계가 뭐야?", "expected_filename": "holdout_A_company_intro", "expected_terms": ["출하검사"]},
+    {"question": "SD-1000의 정격출력이랑 변환효율 둘 다 알려줘", "expected_filename": "holdout_B_spec_sheet", "expected_terms": ["10kW", "98.6"]}
+  ]
+}

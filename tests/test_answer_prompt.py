@@ -3,6 +3,7 @@ import unittest
 from app.core.answer_prompt import (
     build_grounded_answer_prompt,
     build_grounded_system_prompt,
+    build_question_specific_instruction,
     find_unverified_question_terms,
 )
 
@@ -87,6 +88,26 @@ class GroundedAnswerPromptTests(unittest.TestCase):
         self.assertIn("[질문 표현 대조 결과]", prompt)
         self.assertIn("'가상메탈아크용접'", prompt)
         self.assertIn("이 표현을 참고가 확인한 사실로 쓰거나 '예'로 긍정하지 말고", prompt)
+
+    def test_sequence_question_requires_every_reference_step(self):
+        instruction = build_question_specific_instruction("두 재료를 어떤 순서로 붙이나?")
+
+        self.assertIn("첫 단계부터 마지막 단계까지 빠짐없이 번호로", instruction)
+
+    def test_difference_question_requires_grounded_calculation(self):
+        question = "두 모델의 길이 차이는 얼마야?"
+        instruction = build_question_specific_instruction(question)
+        prompt = build_grounded_answer_prompt(question=question, context_text="A는 10 mm, B는 7 mm")
+
+        self.assertIn("참고의 수치와 단위만 사용해", instruction)
+        self.assertIn("산식과 결과", instruction)
+        self.assertIn("큰 값 - 작은 값 = 결과", instruction)
+        self.assertGreater(prompt.index("[이 질문에서 반드시 수행할 작업]"), prompt.index("[사용자 질문]"))
+
+    def test_unrelated_question_does_not_trigger_format_rules(self):
+        instruction = build_question_specific_instruction("제품의 주요 특징을 알려줘")
+
+        self.assertEqual(instruction, "질문에서 별도의 답변 형식을 요구하지 않았습니다.")
 
 
 if __name__ == "__main__":
