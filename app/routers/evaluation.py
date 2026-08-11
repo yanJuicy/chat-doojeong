@@ -115,6 +115,9 @@ def score_expectations(
 
 def _evict_exact_question_cache(request: Request, question: str) -> None:
     cache = getattr(request.app.state, "question_cache", None)
+    if hasattr(cache, "evict_exact"):
+        cache.evict_exact(question)
+        return
     if not isinstance(cache, list):
         return
     normalized = " ".join(question.casefold().split())
