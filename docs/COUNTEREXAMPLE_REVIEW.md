@@ -12,9 +12,9 @@ structural-review-and-counterexamples 태스크 산출물. 코드/DB는 건드�
    docker compose up -d qdrant postgres ollama
    & "C:\v\rag_latest\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
    ```
-2. `EVAL_ADVERSARIAL_QUESTIONS.json`의 `questions` 배열만 추출해 (category/note/confidence 필드는 API가 무시하므로 그대로 둬도 무방) `/api/debug/evaluate`에 POST. PowerShell 따옴표 이스케이프 문제가 반복해서 있었으므로, curl에 인라인 JSON 대신 **파일로 저장 후 `--data @file` 방식**을 쓸 것.
+2. `EVAL_ADVERSARIAL_QUESTIONS.json`의 `questions` 배열만 추출해 (category/note/confidence 필드는 API가 무시하므로 그대로 둬도 무방) `/api/evaluation/run`에 POST. PowerShell 따옴표 이스케이프 문제가 반복해서 있었으므로, curl에 인라인 JSON 대신 **파일로 저장 후 `--data @file` 방식**을 쓸 것.
    ```powershell
-   curl.exe -s -X POST http://127.0.0.1:8000/api/debug/evaluate `
+   curl.exe -s -X POST http://127.0.0.1:8000/api/evaluation/run `
      -H "Content-Type: application/json; charset=utf-8" `
      --data-binary "@docs\EVAL_ADVERSARIAL_QUESTIONS.json" -o eval_result.json
    ```
@@ -50,7 +50,7 @@ structural-review-and-counterexamples 태스크 산출물. 코드/DB는 건드�
 2. 도장공정 "마스킹 다음 단계" 질문 — 실제로는 CAP MASKING이 삽입(2번)·제거(6번) 두 번 등장해서 질문 자체가 모호했음. "삽입" 명시로 수정
 3. RB5-850 vs RB5-850E 교차혼동 문항 — 이 코퍼스에서 두 표기가 완전히 같은 값(5kg, 927.7mm)이라 애초에 혼동을 테스트할 수 없는 무효 문항이었음. RB3-1200E(1200mm) vs RB3-730ES(730mm)로 교체(가반하중은 둘 다 3kg로 같지만 도달범위는 다름 — 진짜 식별자 구분 테스트가 됨)
 
-추가로 발견한 **일반 평가 인프라 한계**(문항 오류가 아니라 `/api/debug/evaluate`의 term-matching 방식 자체의 한계): `expected_terms`는 LLM 최종 답변 문자열에 대해 단순 `casefold()` 후 substring `in` 검사만 한다. 원문이 "촉매 변환기"(띄어쓰기 있음)인데 내가 "촉매변환기"(붙여쓰기)로 정답어를 걸면, LLM이 띄어쓰기를 살려서 답하는 순간 실제로는 맞았는데도 `expected_terms_hit=false`로 오탐 처리된다. 한국어는 URL/모델명이 아닌 한 이런 스페이싱 변동이 흔하므로, 사실 확인용 `expected_terms`는 가능하면 스페이싱에 안전한 짧은 부분어(예: "촉매변환기" 대신 "촉매")를 쓰는 것이 좋다 — 이번에 해당 문항은 이렇게 완화해뒀다.
+추가로 발견한 **일반 평가 인프라 한계**(문항 오류가 아니라 `/api/evaluation/run`의 term-matching 방식 자체의 한계): `expected_terms`는 LLM 최종 답변 문자열에 대해 단순 `casefold()` 후 substring `in` 검사만 한다. 원문이 "촉매 변환기"(띄어쓰기 있음)인데 내가 "촉매변환기"(붙여쓰기)로 정답어를 걸면, LLM이 띄어쓰기를 살려서 답하는 순간 실제로는 맞았는데도 `expected_terms_hit=false`로 오탐 처리된다. 한국어는 URL/모델명이 아닌 한 이런 스페이싱 변동이 흔하므로, 사실 확인용 `expected_terms`는 가능하면 스페이싱에 안전한 짧은 부분어(예: "촉매변환기" 대신 "촉매")를 쓰는 것이 좋다 — 이번에 해당 문항은 이렇게 완화해뒀다.
 
 ## 카테고리별 예상(가설) — 코드만 읽고 세운 예측, 검증 전
 

@@ -225,12 +225,4 @@ def create_evaluation_router(run_chat_pipeline: ChatPipeline) -> APIRouter:
         response_model=EvalResponse,
         name="run_evaluation",
     )
-    router.add_api_route(
-        "/api/debug/evaluate",
-        evaluate_questions,
-        methods=["POST"],
-        response_model=EvalResponse,
-        include_in_schema=False,
-        name="run_evaluation_legacy",
-    )
     return router

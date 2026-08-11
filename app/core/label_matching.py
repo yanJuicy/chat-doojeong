@@ -131,11 +131,6 @@ def find_question_label_hints(question: str, labels: list[str]) -> list[str]:
     return sorted(exact_matches | alias_matches | family_matches, key=len, reverse=True)
 
 
-def label_is_question_hint(question: str, label: str) -> bool:
-    """라벨이 질문에 직접 또는 허용된 동의표현으로 등장하는지 확인한다."""
-    return bool(find_question_label_hints(question, [label]))
-
-
 def expand_search_query(question: str) -> str:
     """원문은 보존하고, 문서에서 흔히 쓰는 동의표현만 뒤에 덧붙인다."""
     additions: list[str] = []

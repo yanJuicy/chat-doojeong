@@ -101,7 +101,6 @@ async def process_zip_bytes(
                             document_id=existing_document.id,
                             filename=display_name,
                             is_duplicate=True,
-                            duplicate_of=existing_document.id,
                         )
                     )
                     continue

@@ -18,7 +18,6 @@ class Chunk(BaseModel):
     page_number: int | None = None
     is_table: bool = False  # table_extraction 모듈에서 넘어온 표 청크인지 여부
     image_path: str | None = None  # 이미지(그림/차트) 캡션 청크인 경우, 원본 이미지 파일 경로
-    precomputed_dense_vector: list[float] | None = None  # 청킹 단계에서 이미 계산된 벡터가 있으면 재사용 (문장 1개짜리 청크 등)
 
 
 class BaseChunker(ABC):

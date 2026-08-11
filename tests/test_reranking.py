@@ -5,7 +5,7 @@ import inspect
 import unittest
 
 from app.core.bge_reranker import BgeRerankerV2
-from app.core.lexical_scoring import keyword_overlap_score, match_query_terms, query_terms
+from app.core.lexical_scoring import match_query_terms, query_terms
 from app.core.lightweight_reranker import lightweight_rerank
 from app.core.reranker import BaseReranker
 from app.core.retrieval_merge import merge_global_and_labeled_candidates
