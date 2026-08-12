@@ -18,6 +18,7 @@ import logging
 import uuid
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; InternalRAGCrawler/1.0)"}
 _REQUEST_TIMEOUT = 15
+_USER_AGENT = _HEADERS["User-Agent"]
 
 
 class CrawlResult:
@@ -43,6 +45,30 @@ def _same_domain(url: str, allowed_domain: str) -> bool:
     netloc = urlparse(url).netloc.partition(":")[0].lower()  # 포트 제거
     allowed = allowed_domain.lower()
     return netloc == allowed or netloc.endswith("." + allowed)
+
+
+def _load_robots_parser(url: str, fetch_fn) -> RobotFileParser:
+    """url이 속한 도메인의 robots.txt를 직접 가져와서 파서를 만든다.
+
+    표준 라이브러리의 RobotFileParser.read()를 그대로 쓰지 않는 이유:
+    read()는 robots.txt 요청 자체가 401/403으로 거부되면 "전체 크롤링 금지"로
+    자동 해석해버린다. 그런데 이건 사이트의 실제 정책이 아니라 서버의 봇 차단(WAF)
+    때문인 경우가 실제로 있다(예: robots.txt가 아예 없는 사이트인데도 403을 반환).
+    그래서 여기서는 200 응답으로 실제 내용을 받았을 때만 그 규칙을 신뢰하고,
+    그 외(404/403/타임아웃 등)에는 "규칙 없음(전체 허용)"으로 간주한다.
+    """
+    parser = RobotFileParser()
+    parsed = urlparse(url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+
+    status_code, text = fetch_fn(robots_url)
+    if status_code == 200 and text:
+        parser.parse(text.splitlines())
+        logger.info("robots.txt 확인됨: %s", robots_url)
+    else:
+        parser.parse([])  # 규칙 없음 = 전체 허용
+        logger.info("robots.txt 없음/접근불가(status=%s): %s -> 규칙 없음으로 간주", status_code, robots_url)
+    return parser
 
 
 def _normalize_url(url: str) -> str:
@@ -65,6 +91,7 @@ def crawl(
     Args:
         fetch_fn: (url) -> (status_code, html_text) 를 반환하는 함수. 기본은 실제 HTTP 요청.
                   테스트 시 가짜 함수를 주입해서 네트워크 없이 크롤링 로직만 검증할 수 있다.
+                  robots.txt 조회에도 같은 함수를 재사용한다.
 
     Returns:
         수집된 페이지들의 CrawlResult 목록
@@ -78,6 +105,7 @@ def crawl(
     visited: set[str] = set()
     queue: list[tuple[str, int]] = [(_normalize_url(seed_url), 0)]
     results: list[CrawlResult] = []
+    robots_parsers: dict[str, RobotFileParser] = {}  # 도메인별로 한 번만 조회하도록 캐싱
 
     while queue and len(results) < max_pages:
         url, depth = queue.pop(0)
@@ -87,6 +115,13 @@ def crawl(
 
         if not _same_domain(url, allowed_domain):
             logger.info("도메인 제한으로 건너뜀: %s", url)
+            continue
+
+        netloc = urlparse(url).netloc
+        if netloc not in robots_parsers:
+            robots_parsers[netloc] = _load_robots_parser(url, fetch_fn)
+        if not robots_parsers[netloc].can_fetch(_USER_AGENT, url):
+            logger.info("robots.txt 규칙으로 건너뜀: %s", url)
             continue
 
         status_code, html = fetch_fn(url)
