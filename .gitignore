@@ -16,3 +16,4 @@ backups/
 releases/
 wheelhouse/
 eval/
+.DS_Store
