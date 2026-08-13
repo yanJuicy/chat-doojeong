@@ -29,6 +29,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from langdetect import detect as detect_language
@@ -117,6 +118,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="온프레미스 RAG 챗봇 서버 (DB 중심 아키텍처)", lifespan=lifespan)
+
+# React 개발 서버(CRA 3000 / Vite 5173) 로컬 접속 허용. 배포 시 실제 프론트 도메인으로 좁혀야 한다.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
