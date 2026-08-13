@@ -418,6 +418,7 @@ async def _run_workers_in_background(app: FastAPI) -> None:
                         batch_count = await chunking_worker.process_pending_documents(
                             session,
                             app.state.chunker,
+                            app.state.intent_classifier,
                             app.state.embedding_provider,
                             app.state.llm_provider,
                         )
