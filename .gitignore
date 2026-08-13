@@ -16,3 +16,4 @@ backups/
 releases/
 wheelhouse/
 eval/
+frontend/node_modules/

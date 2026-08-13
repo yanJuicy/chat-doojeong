@@ -49,6 +49,22 @@ class UpdateLabelsRequest(BaseModel):
     labels: list[str]
 
 
+class DeleteDocumentsRequest(BaseModel):
+    document_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DeleteDocumentIssue(BaseModel):
+    document_id: str
+    reason: str
+
+
+class DeleteDocumentsResponse(BaseModel):
+    deleted: list[str] = Field(default_factory=list)
+    blocked: list[DeleteDocumentIssue] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    cleanup_warnings: list[str] = Field(default_factory=list)
+
+
 class ChatRequest(BaseModel):
     question: str
 

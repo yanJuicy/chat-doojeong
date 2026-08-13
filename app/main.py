@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from langdetect import detect as detect_language
 from sqlalchemy import delete, func, select
@@ -40,6 +40,9 @@ from .api_models import (
     ChatSource,
     CrawlRequest,
     CrawlResponse,
+    DeleteDocumentIssue,
+    DeleteDocumentsRequest,
+    DeleteDocumentsResponse,
     RunWorkersResponse,
     UpdateLabelsRequest,
     UploadResponse,
@@ -114,6 +117,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="온프레미스 RAG 챗봇 서버 (DB 중심 아키텍처)", lifespan=lifespan)
 
 _STATIC_DIR = Path(__file__).parent / "static"
+_FRONTEND_DIST_DIR = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+_FRONTEND_ASSETS_DIR = _FRONTEND_DIST_DIR / "assets"
+
+if _FRONTEND_ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_ASSETS_DIR), name="frontend-assets")
 
 
 async def _get_corpus_revision() -> str:
@@ -132,8 +140,11 @@ app.mount("/images", StaticFiles(directory=settings.image_storage_dir), name="im
 
 
 @app.get("/", response_class=HTMLResponse)
-async def serve_console() -> str:
-    """브라우저에서 curl/PowerShell 없이 질문·파일업로드를 바로 해볼 수 있는 개발용 콘솔."""
+async def serve_console():
+    """빌드된 React 화면을 제공하고, 빌드가 없을 때만 기존 개발용 콘솔로 대체한다."""
+    react_index = _FRONTEND_DIST_DIR / "index.html"
+    if react_index.exists():
+        return FileResponse(react_index)
     return (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
@@ -657,13 +668,138 @@ async def list_documents() -> list[dict]:
                 "document_id": d.id,
                 "filename": d.filename,
                 "status": d.status.value,
+                "current_page": d.current_page,
+                "total_pages": d.total_pages,
+                "retry_count": d.retry_count,
+                "error_message": d.error_message,
                 "warning_message": d.warning_message,
                 "extraction_quality_score": d.extraction_quality_score,
                 "extraction_method": d.extraction_method,
+                "category": d.category,
+                "created_at": d.created_at,
+                "updated_at": d.updated_at,
+                "indexed_at": d.indexed_at,
                 "labels": labels_by_doc.get(d.id, []),
             }
             for d in docs
         ]
+
+
+_DELETE_BLOCKED_STATUSES = {
+    DocumentStatus.EXTRACTING,
+    DocumentStatus.EXTRACTED,
+    DocumentStatus.CHUNKED,
+}
+
+
+def _unlink_managed_file(path: Path, root: Path, warnings: list[str]) -> None:
+    """관리 디렉터리 안의 파일만 삭제한다. 경로가 밖을 가리키면 안전을 위해 건너뛴다."""
+    try:
+        resolved_path = path.resolve()
+        resolved_root = root.resolve()
+        resolved_path.relative_to(resolved_root)
+        if resolved_path.is_file():
+            resolved_path.unlink()
+    except (OSError, ValueError) as exc:
+        warnings.append(f"{path}: {exc}")
+
+
+async def _delete_documents(
+    request: Request,
+    document_ids: list[str],
+) -> DeleteDocumentsResponse:
+    unique_ids = list(dict.fromkeys(document_ids))
+    response = DeleteDocumentsResponse()
+    source_paths: list[Path] = []
+    image_paths: list[Path] = []
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Document)
+            .where(Document.id.in_(unique_ids))
+            .with_for_update()
+        )
+        documents = {document.id: document for document in result.scalars().all()}
+        response.missing = [document_id for document_id in unique_ids if document_id not in documents]
+
+        deletable: list[Document] = []
+        for document_id in unique_ids:
+            document = documents.get(document_id)
+            if document is None:
+                continue
+            if document.status in _DELETE_BLOCKED_STATUSES:
+                response.blocked.append(
+                    DeleteDocumentIssue(
+                        document_id=document.id,
+                        reason="현재 문서 처리 중입니다. 처리가 끝난 뒤 삭제해 주세요.",
+                    )
+                )
+                continue
+            try:
+                await request.app.state.vector_store.delete_by_document_id(document.id)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("문서 삭제 전 Qdrant 정리 실패: document_id=%s", document.id, exc_info=True)
+                response.blocked.append(
+                    DeleteDocumentIssue(
+                        document_id=document.id,
+                        reason=f"벡터 데이터 정리에 실패했습니다: {exc}",
+                    )
+                )
+                continue
+            deletable.append(document)
+
+        deletable_ids = [document.id for document in deletable]
+        if deletable_ids:
+            chunk_result = await session.execute(
+                select(DocumentChunk.image_path).where(
+                    DocumentChunk.document_id.in_(deletable_ids),
+                    DocumentChunk.image_path.is_not(None),
+                )
+            )
+            image_root = Path(settings.image_storage_dir)
+            image_paths = [image_root / Path(image_path).name for image_path in chunk_result.scalars().all()]
+            source_paths = [Path(document.file_path) for document in deletable if document.file_path]
+
+            await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id.in_(deletable_ids)))
+            await session.execute(delete(DocumentLabel).where(DocumentLabel.document_id.in_(deletable_ids)))
+            await session.execute(delete(Document).where(Document.id.in_(deletable_ids)))
+            await session.commit()
+            response.deleted = deletable_ids
+
+    upload_root = _UPLOAD_DIR.resolve()
+    image_root = Path(settings.image_storage_dir).resolve()
+    for source_path in source_paths:
+        _unlink_managed_file(source_path, upload_root, response.cleanup_warnings)
+    for image_path in image_paths:
+        _unlink_managed_file(image_path, image_root, response.cleanup_warnings)
+
+    logger.info(
+        "문서 삭제 완료: deleted=%d, blocked=%d, missing=%d",
+        len(response.deleted),
+        len(response.blocked),
+        len(response.missing),
+    )
+    return response
+
+
+@app.delete("/api/documents/{document_id}", response_model=DeleteDocumentsResponse)
+async def delete_document(document_id: str, request: Request) -> DeleteDocumentsResponse:
+    """문서 하나와 관련 DB·벡터·관리 파일을 삭제한다."""
+    response = await _delete_documents(request, [document_id])
+    if response.missing:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    if response.blocked:
+        raise HTTPException(status_code=409, detail=response.blocked[0].reason)
+    return response
+
+
+@app.post("/api/documents/delete-batch", response_model=DeleteDocumentsResponse)
+async def delete_documents_batch(
+    body: DeleteDocumentsRequest,
+    request: Request,
+) -> DeleteDocumentsResponse:
+    """선택한 문서를 최대 100개까지 한 번에 정리한다. 처리 중 문서는 삭제하지 않고 이유를 반환한다."""
+    return await _delete_documents(request, body.document_ids)
 
 
 @app.get("/api/documents/{document_id}/chunks")
