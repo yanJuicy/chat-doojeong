@@ -373,7 +373,7 @@ function renderChatResult(data) {
     .map(s => `${s.category} ${(s.similarity * 100).toFixed(1)}%`)
     .join(' · ');
   const cacheLine = data.cache_similarity !== null
-    ? `가장 가까운 과거 질문과의 유사도 ${(data.cache_similarity * 100).toFixed(1)}%${data.cache_hit ? ' (완전 일치, 답변 재사용됨)' : ' (완전히 같은 질문이 아니라 새로 생성)'}`
+    ? `가장 가까운 과거 질문과의 유사도 ${(data.cache_similarity * 100).toFixed(1)}%${data.cache_hit ? ' (답변 재사용됨)' : ' (안전 조건 불충족으로 새로 생성)'}`
     : '캐시된 과거 질문 없음';
 
   diag.style.display = 'block';
@@ -718,8 +718,6 @@ async function pollStatus(documentId) {
   const data = await res.json();
   documents[documentId].status = data.status;
   documents[documentId].warning = data.warning_message;
-  documents[documentId].category = data.category;
-  documents[documentId].categorySimilarity = data.category_similarity;
   documents[documentId].currentPage = data.current_page;
   documents[documentId].totalPages = data.total_pages;
   documents[documentId].extractionQuality = data.extraction_quality_score;
@@ -883,9 +881,6 @@ function renderDocList() {
   for (const [id, doc] of entries) {
     const row = document.createElement('div');
     row.className = 'doc-row';
-    const categoryText = doc.category
-      ? `<span class="meta" style="margin-left:6px;">${doc.category} ${(doc.categorySimilarity * 100).toFixed(0)}%</span>`
-      : '';
     const progressText = doc.status === 'extracting' && doc.totalPages
       ? `<span class="meta" style="margin-left:6px;">${doc.currentPage || 0}/${doc.totalPages}페이지</span>`
       : '';
@@ -911,7 +906,7 @@ function renderDocList() {
 
     row.innerHTML = `
       <span class="doc-name" style="cursor:pointer; text-decoration:underline; text-decoration-style:dotted;" title="클릭해서 원본 파일 열기: ${doc.filename}">${doc.filename}</span>
-      <span class="status-pill status-${doc.status}">${doc.status}${doc.warning ? ' ⚠' : ''}</span>${progressText}${qualityText}${categoryText}${retryButton}${labelsText}
+      <span class="status-pill status-${doc.status}">${doc.status}${doc.warning ? ' ⚠' : ''}</span>${progressText}${qualityText}${retryButton}${labelsText}
     `;
     row.querySelector('.doc-name').addEventListener('click', () => {
       openFileViewer(id, doc.filename);

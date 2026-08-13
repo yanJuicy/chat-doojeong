@@ -115,6 +115,9 @@ def score_expectations(
 
 def _evict_exact_question_cache(request: Request, question: str) -> None:
     cache = getattr(request.app.state, "question_cache", None)
+    if hasattr(cache, "evict_exact"):
+        cache.evict_exact(question)
+        return
     if not isinstance(cache, list):
         return
     normalized = " ".join(question.casefold().split())
@@ -221,13 +224,5 @@ def create_evaluation_router(run_chat_pipeline: ChatPipeline) -> APIRouter:
         methods=["POST"],
         response_model=EvalResponse,
         name="run_evaluation",
-    )
-    router.add_api_route(
-        "/api/debug/evaluate",
-        evaluate_questions,
-        methods=["POST"],
-        response_model=EvalResponse,
-        include_in_schema=False,
-        name="run_evaluation_legacy",
     )
     return router

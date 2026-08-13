@@ -70,6 +70,8 @@ class Settings(BaseSettings):
 
     # --- 질문 캐싱 ---
     question_cache_max_size: int = 200  # 메모리 캐시에 유지할 최대 질문 개수
+    question_cache_ttl_hours: int = 48  # 마지막 사용 후 만료되는 sliding TTL (보수적으로 2일)
+    question_cache_similarity_threshold: float = 0.92  # 후보 탐색용; 아래 안전조건까지 모두 맞아야 재사용
 
     # --- OCR (스캔본 PDF) ---
     scan_render_dpi: int = 200  # 300에서 낮춤 - 픽셀수가 약 44%로 줄어 OCR 시간 크게 단축 (인증서/도면류는 상향 권장)

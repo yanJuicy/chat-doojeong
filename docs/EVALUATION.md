@@ -4,7 +4,6 @@ The browser console intentionally has no evaluation panel. Evaluation remains av
 the separate `app.routers.evaluation` router.
 
 - `POST /api/evaluation/run`: canonical evaluation endpoint
-- `POST /api/debug/evaluate`: compatibility alias for existing automation
 
 Run the default evaluation set against a running server:
 

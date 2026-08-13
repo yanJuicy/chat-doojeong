@@ -11,7 +11,6 @@ from ..db.models import Document, DocumentChunk, DocumentLabel, DocumentStatus
 from ..db.session import async_session_factory
 from .bge_reranker import BgeRerankerV2
 from .identifier_matching import boost_exact_identifiers
-from .label_matching import find_question_label_hints
 from .lexical_scoring import query_terms
 from .lightweight_reranker import lightweight_rerank
 from .retrieval_fusion import apply_relevance_floor_with_safe_rescue, rescue_broad_lexical_candidates
@@ -26,13 +25,6 @@ logger = logging.getLogger(__name__)
 class CandidateBatch:
     candidates: list[SearchResult]
     labeled_document_ids: list[str]
-
-
-async def _find_explicit_question_labels(question: str) -> list[str]:
-    async with async_session_factory() as session:
-        result = await session.execute(select(DocumentLabel.label).distinct())
-    labels = [label for (label,) in result.all() if label]
-    return find_question_label_hints(question, labels)
 
 
 async def _find_labeled_document_ids(labels: list[str]) -> list[str]:
@@ -64,9 +56,9 @@ async def retrieve_candidates(
     query_sparse: dict[int, float],
     vector_store: BaseVectorStore,
     reranker: BgeRerankerV2,
+    explicit_labels: list[str],
 ) -> CandidateBatch:
     """전역·라벨 검색을 병합하고 READY 문서의 후보만 반환한다."""
-    explicit_labels = await _find_explicit_question_labels(question)
     labeled_document_ids = await _find_labeled_document_ids(explicit_labels)
     if labeled_document_ids:
         logger.info(

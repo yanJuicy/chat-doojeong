@@ -149,8 +149,8 @@ async def process_pending_documents(
                 )
 
             warnings = validate_chunks(doc.raw_text, chunks)
-            if warnings:
-                doc.warning_message = " / ".join(warnings)
+            doc.warning_message = " / ".join(warnings) if warnings else None
+            if doc.warning_message:
                 logger.warning("청킹 품질 경고: document_id=%s -> %s", doc.id, doc.warning_message)
 
             if intent_classifier is not None:

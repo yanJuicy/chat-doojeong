@@ -45,6 +45,10 @@ class RunWorkersResponse(BaseModel):
     embedded: int
 
 
+class RunWorkersAcceptedResponse(BaseModel):
+    status: str
+
+
 class DuplicateGroupInfo(BaseModel):
     filename: str
     kept_document_id: str

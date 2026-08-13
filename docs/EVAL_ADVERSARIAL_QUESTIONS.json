@@ -1,5 +1,5 @@
 {
-  "_note": "claude가 작성한 반례 질문셋. /api/debug/evaluate 스키마(question/expected_filename/expected_terms)만 실제로 파싱되고 category/note/confidence는 사람이 보는 메타데이터라 API에서는 무시됨(Pydantic extra=ignore 기본값). expected_filename은 부분일치(ilike %...%)라서 원본 표시 파일명 일부만 써도 됨. 2026-08-08에 PostgreSQL(docker exec psql, 읽기전용 SELECT만 수행, 코드/DB 수정 없음)로 전 항목의 정답표를 원문 대조했고, 이 과정에서 v1의 확정 오류 3건(용접 '누설검사'->실제론 영문 'LEAK TEST', 도장공정 '마스킹 다음 단계' 질문 자체의 모호성, RB5-850 vs RB5-850E 교차혼동 문항이 실제로는 같은 값이라 무효)을 발견해 수정함. 모든 항목이 이제 confidence:high — 즉 정답표 자체는 검증됐고, 실패가 나오면 이제는 정답표가 아니라 실제 파이프라인(검색/리랭킹/프롬프트) 문제로 봐도 된다.",
+  "_note": "claude가 작성한 반례 질문셋. /api/evaluation/run 스키마(question/expected_filename/expected_terms)만 실제로 파싱되고 category/note/confidence는 사람이 보는 메타데이터라 API에서는 무시됨(Pydantic extra=ignore 기본값). expected_filename은 부분일치(ilike %...%)라서 원본 표시 파일명 일부만 써도 됨. 2026-08-08에 PostgreSQL(docker exec psql, 읽기전용 SELECT만 수행, 코드/DB 수정 없음)로 전 항목의 정답표를 원문 대조했고, 이 과정에서 v1의 확정 오류 3건(용접 '누설검사'->실제론 영문 'LEAK TEST', 도장공정 '마스킹 다음 단계' 질문 자체의 모호성, RB5-850 vs RB5-850E 교차혼동 문항이 실제로는 같은 값이라 무효)을 발견해 수정함. 모든 항목이 이제 confidence:high — 즉 정답표 자체는 검증됐고, 실패가 나오면 이제는 정답표가 아니라 실제 파이프라인(검색/리랭킹/프롬프트) 문제로 봐도 된다.",
   "categories": {
     "A_word_order_break": "정답 문서는 기존에 통과한 것과 같지만, '회사+제품+속성' 순서를 깨서 lightweight_reranker.py의 '질문 뒤쪽 3토큰=속성' 가정을 직접 스트레스 테스트",
     "B_synonym": "label_matching.py의 _QUERY_EXPANSIONS 사전에 없는 동의어/이표기로 같은 사실을 물음",
@@ -127,7 +127,7 @@
       "expected_filename": "sub3_1_image1",
       "expected_terms": ["소음"],
       "confidence": "high",
-      "note": "정답 자체(소음, sub3_1_image1)는 2026-08-08 원문 대조로 검증됨. 'confidence'는 정답표의 사실 정확성을 뜻하며, 이 문항이 파이프라인을 통과할지 여부는 별개 — '두정테크'라는 라벨을 아예 안 써서 label_is_question_hint()가 매칭 못 해 explicit_label_boost/식별자 가산점 없이 순수 의미검색+렉시컬만으로 찾아야 함. 전역검색 폴백이 실제로 동작하는지의 핵심 테스트"
+      "note": "정답 자체(소음, sub3_1_image1)는 2026-08-08 원문 대조로 검증됨. 'confidence'는 정답표의 사실 정확성을 뜻하며, 이 문항이 파이프라인을 통과할지 여부는 별개 — '두정테크'라는 라벨을 아예 안 써서 find_question_label_hints()가 매칭 못 해 explicit_label_boost/식별자 가산점 없이 순수 의미검색+렉시컬만으로 찾아야 함. 전역검색 폴백이 실제로 동작하는지의 핵심 테스트"
     },
     {
       "category": "F_no_explicit_label",

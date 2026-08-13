@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from app.core.label_matching import find_question_label_hints, model_family_aliases, organization_label_aliases
+from app.core.label_matching import (
+    find_question_label_hints,
+    is_comparison_question,
+    model_family_aliases,
+    organization_label_aliases,
+)
 
 
 class LabelMatchingTests(unittest.TestCase):
@@ -34,6 +39,9 @@ class LabelMatchingTests(unittest.TestCase):
         self.assertEqual(ordinary, [])
         self.assertEqual(model_family_aliases("VTX-310E"), {"vtx"})
         self.assertEqual(model_family_aliases("RB3-1200E"), set())
+
+    def test_incidental_during_phrase_is_not_a_comparison(self) -> None:
+        self.assertFalse(is_comparison_question("설치 중 오류가 발생하면 어떻게 하나요?"))
 
 
 if __name__ == "__main__":

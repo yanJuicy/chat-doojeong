@@ -44,6 +44,7 @@ from .api_models import (
     CrawlResponse,
     DedupeDocumentsResponse,
     DuplicateGroupInfo,
+    RunWorkersAcceptedResponse,
     RunWorkersResponse,
     UpdateLabelsRequest,
     UploadResponse,
@@ -176,8 +177,6 @@ async def upload_document(file: UploadFile, labels: list[str] = Form(default=[])
                 document_id=existing_doc.id,
                 status=existing_doc.status.value,
                 is_duplicate=True,
-                duplicate_of=existing_doc.id,
-                duplicate_similarity=1.0,
             )
 
         document_id = str(uuid.uuid4())
@@ -288,15 +287,15 @@ async def ingest_text_document(document_id: str, filename: str, text: str) -> Up
     return UploadResponse(document_id=document_id, status=DocumentStatus.EXTRACTED.value)
 
 
-@app.post("/api/admin/run-workers", response_model=RunWorkersResponse)
-async def run_workers(request: Request, background_tasks: BackgroundTasks) -> RunWorkersResponse:
+@app.post("/api/admin/run-workers", response_model=RunWorkersAcceptedResponse)
+async def run_workers(request: Request, background_tasks: BackgroundTasks) -> RunWorkersAcceptedResponse:
     """
     extraction -> chunking -> embedding 워커를 순서대로 실행한다.
     OCR이 몇 분~몇십 분 걸릴 수 있어서, 이 요청 자체는 백그라운드에 맡기고 즉시 응답한다
     (그래야 브라우저가 그동안 멈춘 것처럼 안 보이고, 콘솔의 상태 폴링으로 진행률을 실시간으로 볼 수 있다).
     """
     background_tasks.add_task(_run_workers_in_background, request.app)
-    return RunWorkersResponse(extracted=0, chunked=0, embedded=0)  # 실제 처리는 응답 이후 백그라운드에서 진행됨
+    return RunWorkersAcceptedResponse(status="started")
 
 
 @app.post("/api/admin/dedupe-documents", response_model=DedupeDocumentsResponse)
@@ -419,7 +418,6 @@ async def _run_workers_in_background(app: FastAPI) -> None:
                         batch_count = await chunking_worker.process_pending_documents(
                             session,
                             app.state.chunker,
-                            app.state.intent_classifier,
                             app.state.embedding_provider,
                             app.state.llm_provider,
                         )
@@ -462,7 +460,7 @@ async def _run_workers_in_background(app: FastAPI) -> None:
                 n_chunked,
                 n_embedded,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # 백그라운드 태스크 안 예외는 어디에도 안 알려지고 조용히 사라지므로, 반드시 여기서 로그를 남긴다.
             logger.error("백그라운드 워커 실행 중 예외 발생: %s", exc, exc_info=True)
 
@@ -649,8 +647,6 @@ async def reextract_document(
         doc.extraction_method = None
         doc.pipeline_version = None
         doc.indexed_at = None
-        doc.category = None
-        doc.category_similarity = None
         doc.retry_count = 0
         doc.error_message = None
         doc.warning_message = None
@@ -821,7 +817,7 @@ async def _run_chat_pipeline(
 
     추가된 것들:
       - 질문 캐싱: 완전일치는 빠르게, 의미 유사 질문은 안전조건 확인 후 재사용
-      - 소프트 의도 분류: 질문의 카테고리를 판단하되, 검색을 배제하지 않고 리랭킹 점수에 가산점만 줌
+      - 소프트 의도 분류: semantic cache 안전조건과 화면 진단 정보에만 사용
       - 답변 프롬프트에 근거번호+"모르면 모른다" 규칙을 넣어 환각을 억제 (재임베딩 없는 저비용 방식)
     """
     import time
@@ -842,7 +838,7 @@ async def _run_chat_pipeline(
         intent_classifier: IntentClassifier = request.app.state.intent_classifier
         question_cache: SemanticQuestionCache = request.app.state.question_cache
 
-        current_stage = "질문 언어 감지 및 임베딩 생성"
+        current_stage = "질문 언어 감지"
         yield ("progress", current_stage + " 중...")
         t0 = time.monotonic()
         try:
@@ -851,12 +847,6 @@ async def _run_chat_pipeline(
             question_language = "unknown"
         logger.info("질문 수신 (language=%s): %s", question_language, body.question)
 
-        search_question = expand_search_query(body.question) if settings.query_expansion_enabled else body.question
-        if search_question != body.question:
-            logger.info("검색어 보수적 확장: %s", search_question)
-        dense_vectors, sparse_vectors = await embedding_provider.embed_hybrid([search_question])
-        query_dense = dense_vectors[0]
-        query_sparse = sparse_vectors[0]
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
 
@@ -888,10 +878,22 @@ async def _run_chat_pipeline(
             )
             return
 
+        current_stage = "질문 임베딩 생성"
+        yield ("progress", current_stage + " 중...")
+        t0 = time.monotonic()
+        search_question = expand_search_query(body.question) if settings.query_expansion_enabled else body.question
+        if search_question != body.question:
+            logger.info("검색어 보수적 확장: %s", search_question)
+        dense_vectors, sparse_vectors = await embedding_provider.embed_hybrid([search_question])
+        query_dense = dense_vectors[0]
+        query_sparse = sparse_vectors[0]
+        stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
+        yield ("timing", stage_timings[-1])
+
         current_stage = "질문 의도(카테고리) 분류"
         yield ("progress", current_stage + " 중...")
         t0 = time.monotonic()
-        # 2) 화면에 표시할 질문 카테고리별 유사도를 계산한다.
+        # 2) semantic cache 안전조건과 화면 진단에 쓸 질문 의도를 계산한다.
         # 검색 순위에는 사용하지 않아 오분류가 근거를 배제하지 않는다.
         intent_scores = await intent_classifier.classify(body.question, precomputed_dense_vector=query_dense)
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
@@ -941,6 +943,7 @@ async def _run_chat_pipeline(
             query_sparse,
             vector_store,
             reranker,
+            explicit_labels=list(query_signature.labels),
         )
         candidates = candidate_batch.candidates
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
@@ -962,27 +965,11 @@ async def _run_chat_pipeline(
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
 
-        # 신규 인덱스는 Qdrant payload에 파일명을 함께 저장한다. 예전 인덱스처럼
-        # 파일명이 없는 결과만 PostgreSQL에서 보충해 질문당 중복 조회를 피한다.
         context_filenames: dict[str, str] = {
             str(result.metadata["document_id"]): str(result.metadata["filename"])
             for result in reranked
             if result.metadata.get("document_id") and result.metadata.get("filename")
         }
-        missing_filename_ids = {
-            str(result.metadata["document_id"])
-            for result in reranked
-            if result.metadata.get("document_id")
-            and str(result.metadata["document_id"]) not in context_filenames
-        }
-        if missing_filename_ids:
-            async with async_session_factory() as session:
-                context_doc_result = await session.execute(
-                    select(Document).where(Document.id.in_(missing_filename_ids))
-                )
-                context_filenames.update(
-                    {document.id: document.filename for document in context_doc_result.scalars().all()}
-                )
 
         context_blocks: list[str] = []
         for index, result in enumerate(reranked, start=1):
@@ -1091,7 +1078,6 @@ async def _run_chat_pipeline(
                 ChatLog(
                     question=body.question,
                     question_language=question_language,
-                    question_embedding=json.dumps(query_dense),
                     answer=answer,
                 )
             )
@@ -1102,7 +1088,7 @@ async def _run_chat_pipeline(
         response.stage_timings = stage_timings  # 마지막 단계(캐시 저장) 시간까지 반영해서 다시 동기화
         yield ("result", response)
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("답변 생성 파이프라인 실패 (단계: %s): %s", current_stage, exc, exc_info=True)
         error_payload = {"stage": current_stage, "message": str(exc), "stage_timings": stage_timings}
         yield ("error", error_payload)
