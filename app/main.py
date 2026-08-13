@@ -72,6 +72,7 @@ from .core.structured_chunker import StructuredChunker
 from .core.similarity_utils import cosine_similarity
 from .db.models import ChatLog, Document, DocumentChunk, DocumentLabel, DocumentStatus
 from .db.session import async_session_factory
+from .report_api import create_shipment_report_router
 from .routers.evaluation import create_evaluation_router
 from .workers import chunking_worker, embedding_worker, extraction_worker
 from .zip_ingestion import process_zip_bytes
@@ -1240,3 +1241,6 @@ async def health(request: Request) -> JSONResponse:
 app.include_router(create_evaluation_router(_run_chat_pipeline))
 app.include_router(create_backend_router(_run_chat_pipeline))
 app.include_router(create_documents_router(_run_workers_in_background, _UPLOAD_DIR))
+
+# Shipment report generation is isolated from the RAG pipeline and shares only this server.
+app.include_router(create_shipment_report_router())
