@@ -937,6 +937,7 @@ async def _run_chat_pipeline(
             query_sparse,
             vector_store,
             reranker,
+            explicit_labels=list(query_signature.labels),
         )
         candidates = candidate_batch.candidates
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
