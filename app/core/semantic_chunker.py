@@ -172,14 +172,11 @@ class SemanticChunker(BaseChunker):
     @staticmethod
     def _make_chunk(document_id: str, sentences: list[str], embeddings_np: np.ndarray, indices: list[int]) -> Chunk:
         chunk_sentences = [sentences[i] for i in indices]
-        # 문장이 딱 하나면, 그 문장의 임베딩 = 이 청크 전체의 임베딩이므로 재사용한다.
-        precomputed = embeddings_np[indices[0]].tolist() if len(indices) == 1 else None
         return Chunk(
             chunk_id=str(uuid.uuid4()),
             text=" ".join(chunk_sentences),
             source_document_id=document_id,
             is_table=False,
-            precomputed_dense_vector=precomputed,
         )
 
     @staticmethod

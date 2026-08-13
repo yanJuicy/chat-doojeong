@@ -1,10 +1,162 @@
 {
   "questions": [
     {
-      "question": "두정테크의 용접방식은 뭐야? 공정도 같이 알려줘.",
-      "expected_filename": "sub2_1_img1.jpg",
-      "expected_terms": ["탄산가스 아크용접"]
+      "question": "로봇공학이 뭐야?",
+      "expected_filename": "로봇공학",
+      "expected_terms": [
+        "학제간"
+      ]
+    },
+    {
+      "question": "로봇공학과 기계공학의 차이가 뭐야?",
+      "expected_filename": "로봇공학",
+      "expected_terms": [
+        "물리적 구조"
+      ]
+    },
+    {
+      "question": "로봇공학에 기여하는 학문 분야를 알려줘",
+      "expected_filename": "로봇공학",
+      "expected_terms": [
+        "전기공학"
+      ]
+    },
+    {
+      "question": "로봇공학자가 하는 일이 뭐야?",
+      "expected_filename": "로봇공학",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇이 인간을 대신하는 위험한 작업에는 뭐가 있어?",
+      "expected_filename": "로봇공학",
+      "expected_terms": [
+        "우주"
+      ]
+    },
+    {
+      "question": "위키백과 로봇 분류에는 뭐가 있어?",
+      "expected_filename": "분류:로봇",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇 관련 위키백과 카테고리를 알려줘",
+      "expected_filename": "분류:로봇",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇 경기 분류에 뭐가 있어?",
+      "expected_filename": "분류:로봇 경기",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇 대회나 경기 관련 문서를 알려줘",
+      "expected_filename": "분류:로봇 경기",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇 기업 분류가 뭐야?",
+      "expected_filename": "분류:로봇 기업",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇을 만드는 회사들 목록을 알려줘",
+      "expected_filename": "분류:로봇 기업",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇 제어 분류에는 뭐가 있어?",
+      "expected_filename": "분류:로봇 제어",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇을 제어하는 방법 관련 문서를 알려줘",
+      "expected_filename": "분류:로봇 제어",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇공학 소프트웨어 분류가 뭐야?",
+      "expected_filename": "분류:로봇공학 소프트웨어",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇에 쓰이는 소프트웨어 관련 문서를 알려줘",
+      "expected_filename": "분류:로봇공학 소프트웨어",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇공학사 분류가 뭐야?",
+      "expected_filename": "분류:로봇공학사",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇공학의 역사 관련 문서를 알려줘",
+      "expected_filename": "분류:로봇공학사",
+      "expected_terms": []
+    },
+    {
+      "question": "로봇공학자 분류에는 뭐가 있어?",
+      "expected_filename": "분류:로봇공학자",
+      "expected_terms": []
+    },
+    {
+      "question": "유명한 로봇공학자들 목록을 알려줘",
+      "expected_filename": "분류:로봇공학자",
+      "expected_terms": []
+    },
+    {
+      "question": "무인 자동차 분류가 뭐야?",
+      "expected_filename": "분류:무인 자동차",
+      "expected_terms": []
+    },
+    {
+      "question": "자율주행차 관련 위키백과 문서를 알려줘",
+      "expected_filename": "분류:무인 자동차",
+      "expected_terms": []
+    },
+    {
+      "question": "무인차량 분류에는 뭐가 있어?",
+      "expected_filename": "분류:무인차량",
+      "expected_terms": []
+    },
+    {
+      "question": "사람이 안 타는 차량 관련 문서를 알려줘",
+      "expected_filename": "분류:무인차량",
+      "expected_terms": []
+    },
+    {
+      "question": "미국의 로봇공학자 분류가 뭐야?",
+      "expected_filename": "분류:미국의 로봇공학자",
+      "expected_terms": []
+    },
+    {
+      "question": "미국 출신 로봇 공학자들을 알려줘",
+      "expected_filename": "분류:미국의 로봇공학자",
+      "expected_terms": []
+    },
+    {
+      "question": "사이보그 분류가 뭐야?",
+      "expected_filename": "분류:사이보그",
+      "expected_terms": []
+    },
+    {
+      "question": "사이보그 관련 위키백과 문서를 알려줘",
+      "expected_filename": "분류:사이보그",
+      "expected_terms": []
+    },
+    {
+      "question": "오늘 점심 뭐 먹지?",
+      "expected_filename": null,
+      "expected_terms": []
+    },
+    {
+      "question": "화웨이 최신 스마트폰 성능이 어때?",
+      "expected_filename": null,
+      "expected_terms": []
+    },
+    {
+      "question": "로봇공학과 관련 없는 최신 스마트폰 기종을 알려줘",
+      "expected_filename": null,
+      "expected_terms": []
     }
   ]
 }
-
