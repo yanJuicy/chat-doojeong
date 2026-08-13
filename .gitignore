@@ -18,3 +18,5 @@ wheelhouse/
 eval/
 .DS_Store
 docker-compose.override.yml
+docs/EVAL_QUESTIONS_backup_*.json
+requirements-lock-mac.txt

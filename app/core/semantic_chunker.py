@@ -123,6 +123,11 @@ class SemanticChunker(BaseChunker):
         나중에 embedding_worker가 저장용으로 또 임베딩하지 않도록 여기서 넘겨준다.
         (문장이 여러 개 합쳐진 청크는 "합쳐진 전체"의 임베딩이 필요해서 이 방식을 못 쓴다 —
         여러 문장 임베딩의 평균은 전체를 한 번에 임베딩한 것과 다르기 때문이다.)
+
+        Parent-Child: 이 세그먼트가 청크 여러 개로 쪼개지면, 각 자식 청크에 이 세그먼트
+        전체 텍스트를 parent_text로 붙여서 답변 생성 시 맥락 손실을 줄인다. 애초에 청크가
+        하나로 안 쪼개지면(세그먼트 자체가 이미 작음) parent_text는 비워둔다 — 자기 자신을
+        parent로 중복 저장할 필요가 없다.
         """
         sentences = self._split_sentences(text)
         if not sentences:
@@ -157,6 +162,10 @@ class SemanticChunker(BaseChunker):
 
         if current_indices:
             chunks.append(self._make_chunk(document_id, sentences, embeddings_np, current_indices))
+
+        if len(chunks) > 1:
+            for chunk in chunks:
+                chunk.parent_text = text
 
         return chunks
 

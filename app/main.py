@@ -24,7 +24,9 @@ import hashlib
 import json
 import logging
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
@@ -40,6 +42,8 @@ from .api_models import (
     ChatSource,
     CrawlRequest,
     CrawlResponse,
+    DedupeDocumentsResponse,
+    DuplicateGroupInfo,
     RunWorkersResponse,
     UpdateLabelsRequest,
     UploadResponse,
@@ -54,6 +58,7 @@ from .core.intent_classifier import IntentClassifier
 from .core.label_matching import expand_search_query
 from .core.qdrant_store import QdrantVectorStore
 from .core.qwen_ollama_provider import QwenOllamaProvider, build_cross_lingual_system_prompt
+from .core.question_cache import SemanticQuestionCache, build_query_signature
 from .core.retrieval_pipeline import rerank_candidates, retrieve_candidates
 from .core.answer_prompt import build_grounded_answer_prompt, build_grounded_system_prompt
 from .core.structured_chunker import StructuredChunker
@@ -95,8 +100,11 @@ async def lifespan(app: FastAPI):
     app.state.llm_provider = llm_provider
     app.state.chunker = chunker
     app.state.intent_classifier = IntentClassifier(embedding_provider=embedding_provider)
-    # 질문 캐시: 세션 중 최근 질문들의 (질문, 임베딩, 답변)을 들고 있다가, 아주 비슷한 질문이 다시 오면 재사용한다.
-    app.state.question_cache = []
+    app.state.question_cache = SemanticQuestionCache(
+        max_size=settings.question_cache_max_size,
+        ttl=timedelta(hours=settings.question_cache_ttl_hours),
+        similarity_threshold=settings.question_cache_similarity_threshold,
+    )
     # PaddleOCR은 로딩이 무겁고 안 쓰는 배포도 있으므로, extraction_worker 실행 시점에 지연 로딩한다.
     app.state.extractor_registry = ExtractorRegistry()
     # DB의 SKIP LOCKED는 중복 선점만 막으므로, GPU를 만지는 모든 경로(백그라운드 워커 + /api/chat)를
@@ -116,15 +124,11 @@ app = FastAPI(title="온프레미스 RAG 챗봇 서버 (DB 중심 아키텍처)"
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
-async def _get_corpus_revision() -> str:
-    """READY 문서가 바뀌면 달라지는 캐시 버전. 오래된 동일질문 답변 재사용을 막는다."""
+async def _get_available_document_labels() -> list[str]:
+    """현재 라벨을 조회해 질문의 명시적 회사·제품 힌트를 판별한다."""
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(func.max(Document.updated_at), func.count(Document.id)).where(Document.status == DocumentStatus.READY)
-        )
-        latest_updated_at, ready_count = result.one()
-    timestamp = latest_updated_at.isoformat() if latest_updated_at is not None else "empty"
-    return f"{ready_count}:{timestamp}"
+        result = await session.execute(select(DocumentLabel.label).distinct())
+        return [label for (label,) in result.all() if label]
 
 
 Path(settings.image_storage_dir).mkdir(parents=True, exist_ok=True)
@@ -293,6 +297,86 @@ async def run_workers(request: Request, background_tasks: BackgroundTasks) -> Ru
     """
     background_tasks.add_task(_run_workers_in_background, request.app)
     return RunWorkersResponse(extracted=0, chunked=0, embedded=0)  # 실제 처리는 응답 이후 백그라운드에서 진행됨
+
+
+@app.post("/api/admin/dedupe-documents", response_model=DedupeDocumentsResponse)
+async def dedupe_documents(request: Request, apply: bool = False) -> DedupeDocumentsResponse:
+    """
+    같은 filename + raw_text가 글자 하나까지 완전히 동일한 문서들을 찾아,
+    가장 먼저 인덱싱된 것 하나만 남기고 나머지를 정리한다.
+
+    scripts/dedupe_documents.py와 동일한 로직을 API로 노출한 것 — 팀원이 로컬에
+    스크립트를 따로 받아 실행할 필요 없이, 서버가 켜져 있으면 누구나 이 엔드포인트
+    하나로 같은 방식으로 실행할 수 있다. apply=false(기본값)면 미리보기만 하고
+    실제로는 아무것도 지우지 않는다.
+
+    참고: 0007 마이그레이션(content_hash 자동 중복 감지) 이후로는 새로 추출되는
+    문서에서 이런 중복이 애초에 거의 안 생긴다. 이 엔드포인트는 그 이전에 쌓인
+    데이터를 정리하거나, 혹시 놓친 경우를 위한 보조 안전망이다.
+    """
+    async with async_session_factory() as session:
+        result = await session.execute(select(Document))
+        docs = list(result.scalars().all())
+
+    candidates: dict[tuple[str, int], list[Document]] = defaultdict(list)
+    for d in docs:
+        if d.raw_text:
+            candidates[(d.filename, len(d.raw_text))].append(d)
+
+    duplicate_groups: list[list[Document]] = []
+    for group in candidates.values():
+        if len(group) < 2:
+            continue
+        by_text: dict[str, list[Document]] = defaultdict(list)
+        for d in group:
+            by_text[d.raw_text].append(d)
+        for dupes in by_text.values():
+            if len(dupes) >= 2:
+                duplicate_groups.append(sorted(dupes, key=lambda x: x.created_at))
+
+    groups_info: list[DuplicateGroupInfo] = []
+    documents_removed = 0
+
+    if apply:
+        vector_store: QdrantVectorStore = request.app.state.vector_store
+        async with async_session_factory() as session:
+            for group in duplicate_groups:
+                keep, *remove = group
+                groups_info.append(
+                    DuplicateGroupInfo(
+                        filename=keep.filename,
+                        kept_document_id=keep.id,
+                        removed_document_ids=[d.id for d in remove],
+                    )
+                )
+                for d in remove:
+                    chunks_result = await session.execute(
+                        select(DocumentChunk).where(DocumentChunk.document_id == d.id)
+                    )
+                    for chunk in chunks_result.scalars().all():
+                        await session.delete(chunk)
+                    await session.delete(d)
+                    await session.commit()
+                    await vector_store.delete_by_document_id(d.id)
+                    documents_removed += 1
+    else:
+        for group in duplicate_groups:
+            keep, *remove = group
+            groups_info.append(
+                DuplicateGroupInfo(
+                    filename=keep.filename,
+                    kept_document_id=keep.id,
+                    removed_document_ids=[d.id for d in remove],
+                )
+            )
+            documents_removed += len(remove)
+
+    return DedupeDocumentsResponse(
+        applied=apply,
+        groups_found=len(duplicate_groups),
+        documents_removed=documents_removed,
+        groups=groups_info,
+    )
 
 
 async def _run_workers_in_background(app: FastAPI) -> None:
@@ -470,6 +554,10 @@ async def update_document_labels(document_id: str, body: UpdateLabelsRequest, ba
 
         await session.commit()
 
+    invalidated = request.app.state.question_cache.invalidate_document(document_id)
+    if invalidated:
+        logger.info("문서 변경으로 질문 캐시 %d건 무효화: document_id=%s", invalidated, document_id)
+
     # 벡터DB에 남은 옛 벡터도 지운다 (안 지우면 새 청크와 옛 청크가 같이 검색됨).
     await request.app.state.vector_store.delete_by_document_id(document_id)
 
@@ -567,6 +655,10 @@ async def reextract_document(
         doc.error_message = None
         doc.warning_message = None
         await session.commit()
+
+    invalidated = request.app.state.question_cache.invalidate_document(document_id)
+    if invalidated:
+        logger.info("문서 변경으로 질문 캐시 %d건 무효화: document_id=%s", invalidated, document_id)
 
     # DB가 먼저 UPLOADED가 되었기 때문에 Qdrant 삭제가 잠시 실패해도 검색 단계의 READY 필터가
     # 옛 포인트를 노출하지 않는다. 삭제 성공 뒤에만 새 워커를 시작한다.
@@ -727,8 +819,8 @@ async def _run_chat_pipeline(
 
     /api/chat(기존, 진행상황 없이 최종 결과만)과 /api/chat/stream(SSE, 진행상황 실시간 표시) 둘 다 이 제너레이터를 공유한다.
 
-    추가된 것들 (전부 결론만이 아니라 유사율 수치를 항상 응답에 포함한다):
-      - 질문 캐싱(완전일치): 과거와 완전히 같은 질문이면 새로 생성하지 않고 재사용
+    추가된 것들:
+      - 질문 캐싱: 완전일치는 빠르게, 의미 유사 질문은 안전조건 확인 후 재사용
       - 소프트 의도 분류: 질문의 카테고리를 판단하되, 검색을 배제하지 않고 리랭킹 점수에 가산점만 줌
       - 답변 프롬프트에 근거번호+"모르면 모른다" 규칙을 넣어 환각을 억제 (재임베딩 없는 저비용 방식)
     """
@@ -748,7 +840,7 @@ async def _run_chat_pipeline(
         reranker: BgeRerankerV2 = request.app.state.reranker
         llm_provider: QwenOllamaProvider = request.app.state.llm_provider
         intent_classifier: IntentClassifier = request.app.state.intent_classifier
-        question_cache: list[dict] = request.app.state.question_cache
+        question_cache: SemanticQuestionCache = request.app.state.question_cache
 
         current_stage = "질문 언어 감지 및 임베딩 생성"
         yield ("progress", current_stage + " 중...")
@@ -765,50 +857,30 @@ async def _run_chat_pipeline(
         dense_vectors, sparse_vectors = await embedding_provider.embed_hybrid([search_question])
         query_dense = dense_vectors[0]
         query_sparse = sparse_vectors[0]
-        corpus_revision = await _get_corpus_revision()
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
 
         current_stage = "질문 캐시 확인"
         yield ("progress", current_stage + " 중...")
         t0 = time.monotonic()
-        # 1) 질문 캐싱 확인 — 가장 비슷한 과거 질문과의 유사도는 히트 여부와 무관하게 항상 계산해서 보여준다.
-        best_cache_similarity: float | None = None
-        best_cache_entry: dict | None = None
-        for entry in question_cache:
-            sim = cosine_similarity(query_dense, entry["question_embedding"])
-            if best_cache_similarity is None or sim > best_cache_similarity:
-                best_cache_similarity = sim
-                best_cache_entry = entry
+        # 1) exact match는 의도 분류와 문서 검색을 건너뛰는 빠른 경로다.
+        # 만료 항목 정리와 sliding TTL 갱신은 캐시 구성요소 내부에서 처리한다.
+        exact_match = question_cache.get_exact(body.question)
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
 
-        # 캐시 재사용은 "완전히 같은 질문"일 때만 한다. 유사도 기반 재사용은 위험하다 —
-        # "연차는 며칠인가"와 "병가는 며칠인가"처럼 문장 구조는 비슷해도 답이 다른 질문에
-        # 과거 답을 잘못 재사용할 수 있고, 문서가 갱신돼도 오래된 답을 계속 돌려줄 수 있다.
-        # (유사도 자체는 진단 패널에 계속 보여주되, 답변 재사용의 판단 기준으로는 안 쓴다.)
-        normalized_question = " ".join(body.question.casefold().split())
-        exact_match_entry = next(
-            (
-                entry
-                for entry in question_cache
-                if entry["normalized_question"] == normalized_question
-                and entry.get("corpus_revision") == corpus_revision
-            ),
-            None,
-        )
-
-        if exact_match_entry is not None:
+        if exact_match is not None:
+            exact_match_entry = exact_match.entry
             logger.info("질문 캐시 히트 (완전 일치): %s", body.question)
             yield (
                 "result",
                 ChatResponse(
-                    answer=exact_match_entry["answer"],
+                    answer=exact_match_entry.answer,
                     question_language=question_language,
-                    n_context_chunks=exact_match_entry["n_context_chunks"],
-                    images=exact_match_entry["images"],
-                    sources=exact_match_entry.get("sources", []),
-                    intent_scores=exact_match_entry["intent_scores"],
+                    n_context_chunks=exact_match_entry.n_context_chunks,
+                    images=exact_match_entry.images,
+                    sources=exact_match_entry.sources,
+                    intent_scores=exact_match_entry.intent_scores,
                     cache_hit=True,
                     cache_similarity=1.0,
                     stage_timings=stage_timings,
@@ -824,6 +896,41 @@ async def _run_chat_pipeline(
         intent_scores = await intent_classifier.classify(body.question, precomputed_dense_vector=query_dense)
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
+
+        current_stage = "의미 캐시 안전성 확인"
+        yield ("progress", current_stage + " 중...")
+        t0 = time.monotonic()
+        query_signature = build_query_signature(
+            body.question,
+            available_labels=await _get_available_document_labels(),
+            intent_scores=intent_scores,
+        )
+        semantic_match = question_cache.get_semantic(query_dense, query_signature)
+        stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
+        yield ("timing", stage_timings[-1])
+
+        if semantic_match is not None:
+            cached_entry = semantic_match.entry
+            logger.info(
+                "질문 캐시 히트 (의미 유사도=%.4f, 안전조건 일치): %s",
+                semantic_match.similarity,
+                body.question,
+            )
+            yield (
+                "result",
+                ChatResponse(
+                    answer=cached_entry.answer,
+                    question_language=question_language,
+                    n_context_chunks=cached_entry.n_context_chunks,
+                    images=cached_entry.images,
+                    sources=cached_entry.sources,
+                    intent_scores=intent_scores,
+                    cache_hit=True,
+                    cache_similarity=round(semantic_match.similarity, 4),
+                    stage_timings=stage_timings,
+                ),
+            )
+            return
 
         current_stage = "문서 검색"
         yield ("progress", f"{current_stage} 중... (풀 {settings.adaptive_retrieval_fetch_pool}개에서 상위 후보 추림)")
@@ -883,8 +990,12 @@ async def _run_chat_pipeline(
             filename = context_filenames.get(document_id, "(파일명 없음)")
             page_number = result.metadata.get("page_number")
             page_label = f" | 페이지: {page_number}" if page_number is not None else ""
+            # Parent-Child 청킹: 검색은 정밀한 자식 청크(embedding)로 하되, LLM에게 줄 때는
+            # 이 청크가 속한 더 큰 맥락(parent_text)이 있으면 그걸 우선 사용해 맥락 손실을 줄인다.
+            # parent_text가 없으면(섹션이 애초에 안 쪼개진 경우) 자식 text 그대로 사용한다.
+            body_text = result.metadata.get("parent_text") or result.text
             context_blocks.append(
-                f"[참고 {index} | 파일: {filename}{page_label}]\n{result.text}"
+                f"[참고 {index} | 파일: {filename}{page_label}]\n{body_text}"
             )
         context_text = "\n\n".join(context_blocks)
         language_prompt = build_cross_lingual_system_prompt(question_language=question_language, answer_language="ko")
@@ -950,29 +1061,30 @@ async def _run_chat_pipeline(
             sources=sources,
             intent_scores=intent_scores,
             cache_hit=False,
-            cache_similarity=round(best_cache_similarity, 4) if best_cache_similarity is not None else None,
+            cache_similarity=None,
             stage_timings=stage_timings,
         )
 
         current_stage = "결과 캐시 저장"
         yield ("progress", current_stage + " 중...")
         t0 = time.monotonic()
-        # 6) 캐시에 적재 (메모리 캐시 + DB 로그 둘 다) — 다음에 비슷한 질문이 오면 재사용
-        question_cache.append(
-            {
-                "question": body.question,
-                "normalized_question": normalized_question,
-                "question_embedding": query_dense,
-                "answer": answer,
-                "n_context_chunks": len(reranked),
-                "images": images,
-                "sources": sources,
-                "intent_scores": intent_scores,
-                "corpus_revision": corpus_revision,
-            }
+        # 6) 답과 질문 안전 메타데이터, 실제 근거 출처를 함께 보관한다.
+        question_cache.store(
+            question=body.question,
+            question_vector=query_dense,
+            answer=answer,
+            signature=query_signature,
+            source_document_ids={
+                str(result.metadata["document_id"])
+                for result in reranked
+                if result.metadata.get("document_id")
+            },
+            source_chunk_ids={str(result.chunk_id) for result in reranked if result.chunk_id},
+            n_context_chunks=len(reranked),
+            images=images,
+            sources=sources,
+            intent_scores=intent_scores,
         )
-        if len(question_cache) > settings.question_cache_max_size:
-            question_cache.pop(0)
 
         async with async_session_factory() as session:
             session.add(

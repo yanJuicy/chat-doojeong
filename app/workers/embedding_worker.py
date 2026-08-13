@@ -91,6 +91,7 @@ async def process_pending_chunks(
                     "category": document.category if document else None,
                     "labels": labels_by_document.get(chunk.document_id, []),
                     "pipeline_version": document.pipeline_version if document else None,
+                    "parent_text": chunk.parent_text,  # Parent-Child 청킹: 답변 생성 시 text 대신 이걸 우선 사용
                 },
             )
 

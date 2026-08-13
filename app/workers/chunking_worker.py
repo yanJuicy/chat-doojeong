@@ -120,6 +120,8 @@ async def process_pending_documents(
             title_prefix = f"[문서: {doc_title}]\n"
             for chunk in chunks:
                 chunk.text = title_prefix + chunk.text
+                if chunk.parent_text is not None:
+                    chunk.parent_text = title_prefix + chunk.parent_text
                 if chunk.precomputed_dense_vector is not None:
                     # 텍스트가 바뀌었으니 청킹 단계에서 미리 계산해둔 벡터는 더 이상 이 청크와 안 맞는다.
                     # 재사용하면 안 되므로 비워서, 임베딩 워커가 새 텍스트로 다시 계산하게 한다.
@@ -142,6 +144,7 @@ async def process_pending_documents(
                             if chunk.precomputed_dense_vector is not None
                             else None
                         ),
+                        parent_text=chunk.parent_text,
                     )
                 )
 
