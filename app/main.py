@@ -176,8 +176,6 @@ async def upload_document(file: UploadFile, labels: list[str] = Form(default=[])
                 document_id=existing_doc.id,
                 status=existing_doc.status.value,
                 is_duplicate=True,
-                duplicate_of=existing_doc.id,
-                duplicate_similarity=1.0,
             )
 
         document_id = str(uuid.uuid4())
@@ -419,9 +417,8 @@ async def _run_workers_in_background(app: FastAPI) -> None:
                         batch_count = await chunking_worker.process_pending_documents(
                             session,
                             app.state.chunker,
-                            app.state.intent_classifier,
-                            app.state.embedding_provider,
-                            app.state.llm_provider,
+                            embedding_provider=app.state.embedding_provider,
+                            llm_provider=app.state.llm_provider,
                         )
                     round_chunked += batch_count
                     if batch_count == 0:
@@ -838,7 +835,7 @@ async def _run_chat_pipeline(
         intent_classifier: IntentClassifier = request.app.state.intent_classifier
         question_cache: SemanticQuestionCache = request.app.state.question_cache
 
-        current_stage = "질문 언어 감지 및 임베딩 생성"
+        current_stage = "질문 언어 감지"
         yield ("progress", current_stage + " 중...")
         t0 = time.monotonic()
         try:
@@ -846,20 +843,15 @@ async def _run_chat_pipeline(
         except Exception:  # noqa: BLE001
             question_language = "unknown"
         logger.info("질문 수신 (language=%s): %s", question_language, body.question)
-
-        search_question = expand_search_query(body.question) if settings.query_expansion_enabled else body.question
-        if search_question != body.question:
-            logger.info("검색어 보수적 확장: %s", search_question)
-        dense_vectors, sparse_vectors = await embedding_provider.embed_hybrid([search_question])
-        query_dense = dense_vectors[0]
-        query_sparse = sparse_vectors[0]
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
 
         current_stage = "질문 캐시 확인"
         yield ("progress", current_stage + " 중...")
         t0 = time.monotonic()
-        # 1) exact match는 의도 분류와 문서 검색을 건너뛰는 빠른 경로다.
+        # 1) exact match는 임베딩 생성·의도 분류·문서 검색을 전부 건너뛰는 가장 빠른 경로다.
+        # 그래서 임베딩 계산보다 반드시 먼저 확인해야 한다 — 순서가 바뀌면 캐시가 히트해도
+        # 매번 무거운 임베딩 연산을 낭비하게 된다.
         # 만료 항목 정리와 sliding TTL 갱신은 캐시 구성요소 내부에서 처리한다.
         exact_match = question_cache.get_exact(body.question)
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
@@ -883,6 +875,18 @@ async def _run_chat_pipeline(
                 ),
             )
             return
+
+        current_stage = "검색어 확장 및 임베딩 생성"
+        yield ("progress", current_stage + " 중...")
+        t0 = time.monotonic()
+        search_question = expand_search_query(body.question) if settings.query_expansion_enabled else body.question
+        if search_question != body.question:
+            logger.info("검색어 보수적 확장: %s", search_question)
+        dense_vectors, sparse_vectors = await embedding_provider.embed_hybrid([search_question])
+        query_dense = dense_vectors[0]
+        query_sparse = sparse_vectors[0]
+        stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
+        yield ("timing", stage_timings[-1])
 
         current_stage = "질문 의도(카테고리) 분류"
         yield ("progress", current_stage + " 중...")
