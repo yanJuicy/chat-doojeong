@@ -49,9 +49,6 @@ class Document(Base):
         nullable=False,
     )
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # extraction_worker가 채워넣는 결과 (표 마커 포함)
-    language: Mapped[str | None] = mapped_column(String, nullable=True)  # 언어 감지 결과 (다국어 문서 대응)
-    category: Mapped[str | None] = mapped_column(String, nullable=True)  # 소프트 의도 분류 결과 (가장 가까운 카테고리)
-    category_similarity: Mapped[float | None] = mapped_column(nullable=True)  # 위 카테고리와의 코사인 유사도
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)  # status=FAILED일 때 원인
     warning_message: Mapped[str | None] = mapped_column(Text, nullable=True)  # 실패는 아니지만 청킹 품질 등에서 감지된 이상 징후
     retry_count: Mapped[int] = mapped_column(default=0)  # 실패 후 자동/수동 재시도된 횟수 (max_retries 넘으면 FAILED로 확정)
@@ -100,7 +97,6 @@ class DocumentChunk(Base):
     image_path: Mapped[str | None] = mapped_column(String, nullable=True)  # 이미지 캡션 청크인 경우 원본 이미지 경로
     embedded: Mapped[bool] = mapped_column(Boolean, default=False)  # embedding_worker가 처리 완료 시 True로 표시
     embed_retry_count: Mapped[int] = mapped_column(default=0)  # 이 청크의 임베딩이 실패해서 재시도된 횟수
-    precomputed_dense_vector: Mapped[str | None] = mapped_column(Text, nullable=True)  # 청킹 단계에서 이미 계산된 벡터(JSON) — 있으면 재임베딩 생략
     parent_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # Parent-Child 청킹: 이 청크(자식)가 속한 더 큰 맥락(부모). 검색은 text로, 답변 생성 시 맥락은 이걸로.
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
@@ -112,6 +108,5 @@ class ChatLog(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     question: Mapped[str] = mapped_column(Text, nullable=False)
     question_language: Mapped[str | None] = mapped_column(String, nullable=True)
-    question_embedding: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 배열 문자열 (질문 캐싱용)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
