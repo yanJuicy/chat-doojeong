@@ -16,3 +16,8 @@ backups/
 releases/
 wheelhouse/
 eval/
+
+# hanju의 mac을 위한 설정
+docker-compose.override.yml
+.python-version
+docs/hanju/blog
