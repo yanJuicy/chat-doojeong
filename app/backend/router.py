@@ -1,4 +1,7 @@
-"""app/backend용 SSE 채팅 스트리밍 라우터 — 기존 _run_chat_pipeline을 그대로 재사용한다."""
+"""app/backend용 SSE 채팅 스트리밍 라우터 — 기존 _run_chat_pipeline을 그대로 재사용한다.
+
+코드 안의 분기/흐름을 그림으로 보고 싶으면 router.md(같은 폴더)에 플로우차트가 있다.
+"""
 from __future__ import annotations
 
 import json
