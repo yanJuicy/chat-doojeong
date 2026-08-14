@@ -55,6 +55,7 @@ from .api_models import (
     ZipUploadItem,
     ZipUploadResponse,
 )
+from .backend.documents import create_documents_router
 from .backend.router import create_backend_router
 from .config import settings
 from .core.bge_m3_provider import BgeM3EmbeddingProvider
@@ -1239,3 +1240,4 @@ async def health(request: Request) -> JSONResponse:
 # Evaluation remains API-only: the browser console intentionally has no evaluation panel.
 app.include_router(create_evaluation_router(_run_chat_pipeline))
 app.include_router(create_backend_router(_run_chat_pipeline))
+app.include_router(create_documents_router(_run_workers_in_background, _UPLOAD_DIR))
