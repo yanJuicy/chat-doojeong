@@ -1,4 +1,7 @@
 import unittest
+from io import BytesIO
+
+from docx import Document
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -34,6 +37,42 @@ class ShipmentReportApiTest(unittest.TestCase):
         data["plans"] = []
         response = self.client.post("/api/reports/shipment/generate", json=data)
         self.assertEqual(response.status_code, 422)
+
+    def test_document_endpoint_returns_downloadable_docx(self) -> None:
+        response = self.client.post(
+            "/api/reports/shipment/documents",
+            json=request_data(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["content-type"],
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        self.assertEqual(
+            response.headers["content-disposition"],
+            'attachment; filename="shipment-report-2026-08-14-CUST-001.docx"',
+        )
+        self.assertTrue(response.content.startswith(b"PK"))
+        document = Document(BytesIO(response.content))
+        self.assertIn(
+            "2026-08-14 두정테크 출하보고서",
+            "\n".join(paragraph.text for paragraph in document.paragraphs),
+        )
+
+    def test_document_endpoint_rejects_business_validation_failure(self) -> None:
+        data = request_data()
+        data["plans"][1]["unit"] = "KG"
+        data["actuals"][1]["unit"] = "KG"
+        response = self.client.post(
+            "/api/reports/shipment/documents",
+            json=data,
+        )
+
+        self.assertEqual(response.status_code, 422)
+        detail = response.json()["detail"]
+        self.assertIn("문서로 생성할 수 없습니다", detail["message"])
+        self.assertTrue(any(item["status"] == "FAIL" for item in detail["validations"]))
 
 
 if __name__ == "__main__":
