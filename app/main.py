@@ -698,7 +698,6 @@ async def list_documents() -> list[dict]:
                 "warning_message": d.warning_message,
                 "extraction_quality_score": d.extraction_quality_score,
                 "extraction_method": d.extraction_method,
-                "category": d.category,
                 "created_at": d.created_at,
                 "updated_at": d.updated_at,
                 "indexed_at": d.indexed_at,

@@ -35,6 +35,11 @@ class CrawlResponse(BaseModel):
     n_pages_crawled: int
     document_ids: list[str]
 
+class RunWorkersResponse(BaseModel):
+    extracted: int
+    chunked: int
+    embedded: int
+
 
 class RunWorkersAcceptedResponse(BaseModel):
     status: str

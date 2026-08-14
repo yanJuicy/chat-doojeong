@@ -5,6 +5,11 @@ function apiUrl(path) {
 }
 
 function errorMessage(payload, status) {
+  const apiError =
+    typeof payload === "object" ? payload?.error?.message : null;
+
+  if (typeof apiError === "string") return apiError;
+
   const detail = typeof payload === "object" ? payload?.detail : null;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -31,6 +36,18 @@ async function parseResponse(response) {
   }
 
   return payload;
+}
+
+async function parseV1Response(response) {
+  const payload = await parseResponse(response);
+
+  if (payload?.success === false) {
+    throw new Error(
+      payload.error?.message ?? "요청 처리에 실패했습니다.",
+    );
+  }
+
+  return payload?.data;
 }
 
 export async function streamQuestion(question, { signal, onEvent } = {}) {
@@ -111,10 +128,11 @@ export async function getDocuments(signal) {
 
 export async function getDocumentStatus(documentId, signal) {
   const response = await fetch(
-    apiUrl(`/api/documents/${encodeURIComponent(documentId)}/status`),
+    apiUrl(`/api/v1/documents/${encodeURIComponent(documentId)}`),
     { signal },
   );
-  return parseResponse(response);
+
+  return parseV1Response(response);
 }
 
 export async function getDocumentLabels(documentId, signal) {
@@ -173,21 +191,27 @@ export async function deleteDocuments(documentIds) {
 export async function uploadDocument(file, labels) {
   const formData = new FormData();
   formData.append("file", file);
+
   const isZip = file.name.toLowerCase().endsWith(".zip");
+
   if (!isZip) {
     labels.forEach((label) => formData.append("labels", label));
   }
 
   const endpoint = isZip
     ? "/api/documents/upload-zip"
-    : "/api/documents/upload";
+    : "/api/v1/upload";
 
   const response = await fetch(apiUrl(endpoint), {
     method: "POST",
     body: formData,
   });
-  return parseResponse(response);
+
+  return isZip
+    ? parseResponse(response)
+    : parseV1Response(response);
 }
+
 
 export async function runDocumentWorkers(signal) {
   const response = await fetch(apiUrl("/api/admin/run-workers"), {

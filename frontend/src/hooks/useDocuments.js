@@ -104,6 +104,7 @@ export default function useDocuments(showToast) {
     let duplicates = 0;
     let newlyRegistered = 0;
     let skipped = 0;
+    let requiresManualWorkerStart = false;
     const failures = [];
 
     for (const item of uploadItems) {
@@ -112,9 +113,15 @@ export default function useDocuments(showToast) {
         completed += 1;
         if (item.file.name.toLowerCase().endsWith(".zip")) {
           const created = Array.isArray(result.created) ? result.created : [];
+          const newZipDocuments = created.filter((entry) => !entry.is_duplicate);
+
           duplicates += created.filter((entry) => entry.is_duplicate).length;
-          newlyRegistered += created.filter((entry) => !entry.is_duplicate).length;
+          newlyRegistered += newZipDocuments.length;
           skipped += Array.isArray(result.skipped) ? result.skipped.length : 0;
+
+          if (newZipDocuments.length) {
+            requiresManualWorkerStart = true;
+          }
         } else if (result.is_duplicate) {
           duplicates += 1;
         } else {
@@ -133,20 +140,32 @@ export default function useDocuments(showToast) {
       await loadDocuments();
 
       if (newlyRegistered > 0) {
-        try {
-          setWorkersStarting(true);
-          await runDocumentWorkers();
+        if (requiresManualWorkerStart) {
+          try {
+            setWorkersStarting(true);
+            await runDocumentWorkers();
+            showToast(
+              `문서 ${newlyRegistered}개를 등록하고 처리를 시작했습니다${duplicateText}${skippedText}.`,
+            );
+          } catch (workerError) {
+            setError(
+              `ZIP 문서는 등록됐지만 처리를 시작하지 못했습니다. ${workerError.message}`,
+            );
+            showToast(
+              "등록된 ZIP 문서는 처리 시작 버튼을 눌러주세요.",
+            );
+          } finally {
+            setWorkersStarting(false);
+          }
+        } else {
           showToast(
-            `문서 ${newlyRegistered}개를 등록하고 처리를 시작했습니다${duplicateText}${skippedText}.`,
+            `문서 ${newlyRegistered}개를 등록하고 처리를 시작했습니다${duplicateText}.`,
           );
-        } catch (workerError) {
-          setError(`문서는 등록됐지만 자동 처리를 시작하지 못했습니다. ${workerError.message}`);
-          showToast(`문서 ${newlyRegistered}개가 등록됐습니다. 처리 시작 버튼을 눌러주세요.`);
-        } finally {
-          setWorkersStarting(false);
         }
       } else {
-        showToast(`새로 처리할 문서가 없습니다${duplicateText}${skippedText}.`);
+        showToast(
+          `새로 처리할 문서가 없습니다${duplicateText}${skippedText}.`,
+        );
       }
     }
 
