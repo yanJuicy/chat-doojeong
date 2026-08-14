@@ -17,6 +17,7 @@ releases/
 wheelhouse/
 eval/
 
+
 frontend/node_modules/
 
 
@@ -25,3 +26,10 @@ docker-compose.override.yml
 .python-version
 docs/hanju/blog
 
+
+.DS_Store
+
+docs/EVAL_QUESTIONS_backup_*.json
+requirements-lock-mac.txt
+
+.vs/

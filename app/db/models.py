@@ -57,6 +57,7 @@ class Document(Base):
     extraction_quality_score: Mapped[float | None] = mapped_column(nullable=True)
     extraction_quality_details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 진단값
     extraction_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # raw_text의 SHA256, 자동 중복 감지용
     pipeline_version: Mapped[str | None] = mapped_column(String, nullable=True)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -96,6 +97,7 @@ class DocumentChunk(Base):
     image_path: Mapped[str | None] = mapped_column(String, nullable=True)  # 이미지 캡션 청크인 경우 원본 이미지 경로
     embedded: Mapped[bool] = mapped_column(Boolean, default=False)  # embedding_worker가 처리 완료 시 True로 표시
     embed_retry_count: Mapped[int] = mapped_column(default=0)  # 이 청크의 임베딩이 실패해서 재시도된 횟수
+    parent_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # Parent-Child 청킹: 이 청크(자식)가 속한 더 큰 맥락(부모). 검색은 text로, 답변 생성 시 맥락은 이걸로.
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
 

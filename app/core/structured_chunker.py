@@ -374,4 +374,6 @@ class StructuredChunker(BaseChunker):
         sub_chunks = await self._fallback._split_plain_text(document_id, content)  # noqa: SLF001 (같은 계층의 협력 클래스)
         for sub_chunk in sub_chunks:
             sub_chunk.text = prefix + sub_chunk.text
+            if sub_chunk.parent_text is not None:
+                sub_chunk.parent_text = prefix + sub_chunk.parent_text
         return sub_chunks

@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Callable
@@ -116,8 +117,31 @@ async def _process_one_document(session_factory: SessionFactory, document_id: st
                 raise ValueError("file_path가 없는 문서는 추출할 수 없습니다.")
             extractor = await registry.get_for_file(doc.file_path)
             text = await extractor.extract(doc.file_path, on_progress=on_progress)
+
+            # 자동 중복 감지: 크롤러가 같은 페이지를 다른 URL(쿼리스트링만 다름)로 여러 번
+            # 문서화해도, 텍스트를 실제로 뽑아본 뒤에야 "완전히 같은 내용"인지 확실히 알 수 있다.
+            # 여기서 걸러내면 청킹·임베딩(훨씬 비용이 큰 단계)까지 안 가고 즉시 멈출 수 있다.
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            existing_result = await session.execute(
+                select(Document.id).where(
+                    Document.content_hash == content_hash,
+                    Document.id != doc.id,
+                    Document.status != DocumentStatus.FAILED,
+                )
+            )
+            original_id = existing_result.scalars().first()
+            if original_id is not None:
+                doc.raw_text = text
+                doc.content_hash = content_hash
+                doc.status = DocumentStatus.FAILED
+                doc.warning_message = f"동일한 내용의 문서가 이미 있어 자동으로 건너뜀 (원본: {original_id})"
+                logger.info("자동 중복 감지로 건너뜀: document_id=%s -> 원본=%s", doc.id, original_id)
+                await session.commit()
+                return
+
             quality = evaluate_extraction_quality(text)
             doc.raw_text = text
+            doc.content_hash = content_hash
             doc.extraction_quality_score = quality.score
             quality_details = quality.to_dict()
             page_diagnostics = getattr(extractor, "last_page_diagnostics", None)

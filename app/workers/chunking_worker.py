@@ -10,6 +10,7 @@ extraction_worker가 뭘로(PyMuPDF든 PaddleOCR든 다른 OCR API든) 텍스트
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..core.chunking import BaseChunker
 from ..core.chunk_validator import validate_chunks
+from ..core.intent_classifier import IntentClassifier
 from ..core.label_generation import parse_generated_labels
 from ..core.similarity_utils import cosine_similarity
 from ..core.table_confidence import compute_table_confidence
@@ -39,6 +41,7 @@ LABEL_ABSOLUTE_FLOOR = 0.15
 async def process_pending_documents(
     session: AsyncSession,
     chunker: BaseChunker,
+    intent_classifier: IntentClassifier | None = None,  # 카테고리 분류 기능 폐기됨, 호환용으로만 인자 유지(미사용)
     embedding_provider=None,
     llm_provider=None,
 ) -> int:
@@ -115,6 +118,8 @@ async def process_pending_documents(
             title_prefix = f"[문서: {doc_title}]\n"
             for chunk in chunks:
                 chunk.text = title_prefix + chunk.text
+                if chunk.parent_text is not None:
+                    chunk.parent_text = title_prefix + chunk.parent_text
 
             for chunk in chunks:
                 table_confidence = compute_table_confidence(chunk.text)["confidence"] if chunk.is_table else None
@@ -128,12 +133,13 @@ async def process_pending_documents(
                         table_confidence=table_confidence,
                         image_path=chunk.image_path,
                         embedded=False,
+                        parent_text=chunk.parent_text,
                     )
                 )
 
             warnings = validate_chunks(doc.raw_text, chunks)
-            doc.warning_message = " / ".join(warnings) if warnings else None
-            if doc.warning_message:
+            if warnings:
+                doc.warning_message = " / ".join(warnings)
                 logger.warning("청킹 품질 경고: document_id=%s -> %s", doc.id, doc.warning_message)
 
             doc.status = DocumentStatus.CHUNKED
@@ -245,10 +251,11 @@ async def run_once() -> None:
 
     embedding_provider = BgeM3EmbeddingProvider()
     chunker: BaseChunker = StructuredChunker(embedding_provider=embedding_provider)
+    intent_classifier = IntentClassifier(embedding_provider=embedding_provider)
     llm_provider = QwenOllamaProvider()
 
     async with async_session_factory() as session:
-        n = await process_pending_documents(session, chunker, embedding_provider, llm_provider)
+        n = await process_pending_documents(session, chunker, intent_classifier, embedding_provider, llm_provider)
         logger.info("이번 실행에서 %d개 문서 처리", n)
 
 
