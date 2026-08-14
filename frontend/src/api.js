@@ -35,7 +35,7 @@ async function parseResponse(response) {
 
 export async function streamQuestion(question, { signal, onEvent } = {}) {
   const query = encodeURIComponent(question);
-  const response = await fetch(apiUrl(`/api/chat/stream?question=${query}`), {
+  const response = await fetch(apiUrl(`/api/v1/chat-stream?question=${query}`), {
     headers: { Accept: "text/event-stream" },
     signal,
   });
@@ -49,20 +49,36 @@ export async function streamQuestion(question, { signal, onEvent } = {}) {
   let result = null;
 
   const consumeBlock = (block) => {
-    const jsonText = block
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (!jsonText) return;
-    const event = JSON.parse(jsonText);
-    onEvent?.(event);
-    if (event.result) result = event.result;
-    if (event.error) {
-      const stage = event.error.stage ? `[${event.error.stage}] ` : "";
-      throw new Error(`${stage}${event.error.message ?? "답변 생성에 실패했습니다."}`);
+  const jsonText = block
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+
+  if (!jsonText) return;
+
+  const event = JSON.parse(jsonText);
+
+  if (event.type === "progress") {
+    onEvent?.({ stage: event.message });
+    return;
+  }
+
+  if (event.type === "token") {
+    onEvent?.({ token: event.token });
+    return;
+  }
+
+  if (event.type === "done") {
+    if (!event.success) {
+      throw new Error(
+        event.error?.message ?? "답변 생성에 실패했습니다.",
+      );
     }
-  };
+
+    result = event.data;
+  }
+};
 
   while (true) {
     const { done, value } = await reader.read();
