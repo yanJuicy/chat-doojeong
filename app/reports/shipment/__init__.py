@@ -2,5 +2,11 @@
 
 from .models import ShipmentReportRequest, ShipmentReportResult
 from .service import ShipmentReportService
+from .documents import ShipmentDocumentService
 
-__all__ = ["ShipmentReportRequest", "ShipmentReportResult", "ShipmentReportService"]
+__all__ = [
+    "ShipmentDocumentService",
+    "ShipmentReportRequest",
+    "ShipmentReportResult",
+    "ShipmentReportService",
+]
