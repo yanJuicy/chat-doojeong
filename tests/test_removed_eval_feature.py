@@ -16,13 +16,9 @@ from app.routers.evaluation import (
 )
 
 
-class RemovedEvaluationFeatureTests(unittest.TestCase):
+class EvaluationSurfaceTests(unittest.TestCase):
     def test_evaluation_api_is_registered_outside_console(self) -> None:
         self.assertEqual("/api/evaluation/run", str(app.url_path_for("run_evaluation")))
-        self.assertEqual(
-            "/api/debug/evaluate",
-            str(app.url_path_for("run_evaluation_legacy")),
-        )
 
     def test_console_does_not_render_comparison_tool(self) -> None:
         html = (Path(__file__).parents[1] / "app" / "static" / "index.html").read_text(

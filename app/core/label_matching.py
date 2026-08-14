@@ -51,7 +51,15 @@ _ORGANIZATION_SUFFIXES = tuple(
         reverse=True,
     )
 )
-_COMPARISON_CUES = ("두 ", "둘 ", "비교", "차이", "중 ", "각각", "더 긴", "더 큰", "더 작은")
+_COMPARISON_CUES = ("두 ", "둘 ", "비교", "차이", "각각", "더 긴", "더 큰", "더 작은")
+
+
+def is_comparison_question(question: str) -> bool:
+    """Return whether the question explicitly asks to compare multiple subjects."""
+    normalized = question.casefold()
+    if any(cue in normalized for cue in _COMPARISON_CUES):
+        return True
+    return bool(re.search(r"(?:와|과|및|,).+\s중\s", normalized))
 
 
 def normalize_label_match_text(value: str) -> str:
@@ -111,7 +119,7 @@ def find_question_label_hints(question: str, labels: list[str]) -> list[str]:
     }
 
     family_matches: set[str] = set()
-    if any(cue in question.casefold() for cue in _COMPARISON_CUES):
+    if is_comparison_question(question):
         family_owners: dict[str, set[str]] = {}
         for label in labels:
             for family in model_family_aliases(label):
@@ -121,11 +129,6 @@ def find_question_label_hints(question: str, labels: list[str]) -> list[str]:
                 family_matches.update(owners)
 
     return sorted(exact_matches | alias_matches | family_matches, key=len, reverse=True)
-
-
-def label_is_question_hint(question: str, label: str) -> bool:
-    """라벨이 질문에 직접 또는 허용된 동의표현으로 등장하는지 확인한다."""
-    return bool(find_question_label_hints(question, [label]))
 
 
 def expand_search_query(question: str) -> str:

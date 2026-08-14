@@ -16,4 +16,12 @@ backups/
 releases/
 wheelhouse/
 eval/
+
 frontend/node_modules/
+
+
+# hanju의 mac을 위한 설정
+docker-compose.override.yml
+.python-version
+docs/hanju/blog
+

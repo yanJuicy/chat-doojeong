@@ -10,7 +10,6 @@ extraction_worker가 뭘로(PyMuPDF든 PaddleOCR든 다른 OCR API든) 텍스트
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 from pathlib import Path
@@ -21,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..core.chunking import BaseChunker
 from ..core.chunk_validator import validate_chunks
-from ..core.intent_classifier import IntentClassifier
 from ..core.label_generation import parse_generated_labels
 from ..core.similarity_utils import cosine_similarity
 from ..core.table_confidence import compute_table_confidence
@@ -41,14 +39,11 @@ LABEL_ABSOLUTE_FLOOR = 0.15
 async def process_pending_documents(
     session: AsyncSession,
     chunker: BaseChunker,
-    intent_classifier: IntentClassifier | None = None,
     embedding_provider=None,
     llm_provider=None,
 ) -> int:
     """
     status=EXTRACTED인 문서를 청킹해서 DocumentChunk로 저장하고 상태를 CHUNKED로 올린다.
-    intent_classifier가 주어지면, 문서 전체 텍스트로 소프트 카테고리 분류도 같이 수행해서
-    Document.category / category_similarity에 기록한다 (검색 시 가산점으로만 쓰이고 배제엔 안 씀).
     embedding_provider가 주어지면, 문서에 붙은 라벨(들)이 실제 내용과 잘 맞는지도 확인해서
     조용히 교정/제거한다 (아래 _reclassify_document_labels 참고).
     llm_provider가 주어지면, 라벨이 하나도 없는 문서에 한해 LLM이 대신 라벨을 지어준다
@@ -120,10 +115,6 @@ async def process_pending_documents(
             title_prefix = f"[문서: {doc_title}]\n"
             for chunk in chunks:
                 chunk.text = title_prefix + chunk.text
-                if chunk.precomputed_dense_vector is not None:
-                    # 텍스트가 바뀌었으니 청킹 단계에서 미리 계산해둔 벡터는 더 이상 이 청크와 안 맞는다.
-                    # 재사용하면 안 되므로 비워서, 임베딩 워커가 새 텍스트로 다시 계산하게 한다.
-                    chunk.precomputed_dense_vector = None
 
             for chunk in chunks:
                 table_confidence = compute_table_confidence(chunk.text)["confidence"] if chunk.is_table else None
@@ -137,31 +128,13 @@ async def process_pending_documents(
                         table_confidence=table_confidence,
                         image_path=chunk.image_path,
                         embedded=False,
-                        precomputed_dense_vector=(
-                            json.dumps(chunk.precomputed_dense_vector)
-                            if chunk.precomputed_dense_vector is not None
-                            else None
-                        ),
                     )
                 )
 
             warnings = validate_chunks(doc.raw_text, chunks)
-            if warnings:
-                doc.warning_message = " / ".join(warnings)
+            doc.warning_message = " / ".join(warnings) if warnings else None
+            if doc.warning_message:
                 logger.warning("청킹 품질 경고: document_id=%s -> %s", doc.id, doc.warning_message)
-
-            if intent_classifier is not None:
-                try:
-                    # 문서 앞부분(전체를 다 넣으면 임베딩 모델 입력 길이 제한에 걸릴 수 있어 앞부분만 사용)
-                    classification = await intent_classifier.classify(doc.raw_text[:2000])
-                    doc.category = classification[0]["category"]
-                    doc.category_similarity = classification[0]["similarity"]
-                    logger.info(
-                        "의도 분류: document_id=%s -> %s (유사도 %.4f)", doc.id, doc.category, doc.category_similarity
-                    )
-                except Exception as classify_exc:  # noqa: BLE001
-                    # 의도 분류는 부가 기능이라, 여기서 실패해도 청킹 자체(핵심 파이프라인)는 계속 진행시킨다.
-                    logger.warning("의도 분류 실패(청킹은 정상 진행): document_id=%s (%s)", doc.id, classify_exc)
 
             doc.status = DocumentStatus.CHUNKED
             doc.retry_count = 0
@@ -272,11 +245,10 @@ async def run_once() -> None:
 
     embedding_provider = BgeM3EmbeddingProvider()
     chunker: BaseChunker = StructuredChunker(embedding_provider=embedding_provider)
-    intent_classifier = IntentClassifier(embedding_provider=embedding_provider)
     llm_provider = QwenOllamaProvider()
 
     async with async_session_factory() as session:
-        n = await process_pending_documents(session, chunker, intent_classifier, embedding_provider, llm_provider)
+        n = await process_pending_documents(session, chunker, embedding_provider, llm_provider)
         logger.info("이번 실행에서 %d개 문서 처리", n)
 
 

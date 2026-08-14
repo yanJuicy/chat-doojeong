@@ -88,7 +88,6 @@ async def process_pending_chunks(
                     "image_path": chunk.image_path,
                     "page_number": chunk.page_number,
                     "filename": document.filename if document else None,
-                    "category": document.category if document else None,
                     "labels": labels_by_document.get(chunk.document_id, []),
                     "pipeline_version": document.pipeline_version if document else None,
                 },
@@ -120,11 +119,9 @@ async def process_pending_chunks(
             # 배치마다 커밋 — 이후 배치가 실패해도 여기까지는 이미 지켜진다.
             await session.commit()
             logger.info(
-                "배치 임베딩 완료: %d/%d (재사용 %d개, 신규계산 %d개)",
+                "배치 임베딩 완료: %d/%d",
                 min(batch_start + _ENCODE_BATCH_SIZE, len(chunks)),
                 len(chunks),
-                0,
-                len(batch),
             )
         except Exception as exc:  # noqa: BLE001
             await session.rollback()

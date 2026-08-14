@@ -11,15 +11,12 @@ class UploadResponse(BaseModel):
     document_id: str
     status: str
     is_duplicate: bool = False
-    duplicate_of: str | None = None
-    duplicate_similarity: float | None = None
 
 
 class ZipUploadItem(BaseModel):
     document_id: str
     filename: str
     is_duplicate: bool = False
-    duplicate_of: str | None = None
 
 
 class ZipUploadResponse(BaseModel):
@@ -39,10 +36,8 @@ class CrawlResponse(BaseModel):
     document_ids: list[str]
 
 
-class RunWorkersResponse(BaseModel):
-    extracted: int
-    chunked: int
-    embedded: int
+class RunWorkersAcceptedResponse(BaseModel):
+    status: str
 
 
 class UpdateLabelsRequest(BaseModel):
