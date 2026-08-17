@@ -241,3 +241,21 @@ export function assetUrl(path) {
   if (!path || /^(https?:|data:|blob:)/i.test(path)) return path;
   return apiUrl(path.startsWith("/") ? path : `/${path}`);
 }
+
+export async function generateDailyReport(payload) {
+  const response = await fetch(apiUrl("/api/reports/daily/generate"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse(response);
+}
+
+export async function searchDailyReportReference(query, signal) {
+  if (!query.trim()) return { query, items: [] };
+  const response = await fetch(
+    apiUrl(`/api/reports/daily/reference?q=${encodeURIComponent(query.trim())}`),
+    { signal },
+  );
+  return parseResponse(response);
+}
