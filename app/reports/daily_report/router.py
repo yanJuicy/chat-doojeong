@@ -53,15 +53,27 @@ def create_daily_report_router() -> APIRouter:
         candidate_batch = await retrieve_candidates(
             q, dense_vectors[0], sparse_vectors[0], vector_store, reranker, explicit_labels=[],
         )
-        for candidate in candidate_batch.candidates[:_REFERENCE_LIMIT]:
+        # 같은 문서에서 청크 여러 개가 상위권을 도배하지 않도록, 문서당 가장 점수 높은
+        # 청크 하나만 참고자료로 보여준다 (참고자료 패널은 "다양한 자료를 훑어보는" 용도).
+        # document_id가 아니라 제목(filename) 기준으로 중복 제거한다 — 재크롤링 등으로
+        # 내용은 거의 같은데 별개 문서로 등록된 경우까지 참고자료 화면에서는 하나로 취급한다.
+        seen_titles: set[str] = set()
+        for candidate in candidate_batch.candidates:
+            doc_id = str(candidate.metadata.get("document_id") or candidate.chunk_id)
+            title = str(candidate.metadata.get("filename") or "(파일명 없음)")
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
             items.append(
                 ReferenceItem(
                     source=ReferenceSource.DOCUMENT,
                     title=str(candidate.metadata.get("filename") or "(파일명 없음)"),
                     snippet=candidate.text,
-                    reference_id=str(candidate.metadata.get("document_id") or candidate.chunk_id),
+                    reference_id=doc_id,
                 )
             )
+            if len(seen_titles) >= _REFERENCE_LIMIT:
+                break
 
         # 2) 최근 채팅 기록에서 검색 (질문/답변 텍스트 단순 포함 검색 — 임베딩 저장은 안 함)
         async with async_session_factory() as session:
