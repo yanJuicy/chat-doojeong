@@ -18,6 +18,8 @@ class Chunk(BaseModel):
     page_number: int | None = None
     is_table: bool = False  # table_extraction 모듈에서 넘어온 표 청크인지 여부
     image_path: str | None = None  # 이미지(그림/차트) 캡션 청크인 경우, 원본 이미지 파일 경로
+    parent_text: str | None = None  # Parent-Child 청킹: 이 청크(자식)가 속한 더 큰 맥락(부모 섹션 전체).
+    # None이면 "이 청크 자체가 이미 parent 크기"라는 뜻 — 안 쪼개진 짧은 섹션에서 중복 저장 방지.
 
 
 class BaseChunker(ABC):

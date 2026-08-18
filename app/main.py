@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from langdetect import detect as detect_language
+from collections import defaultdict
 from sqlalchemy import delete, func, select
 
 from .api_models import (
@@ -46,6 +47,8 @@ from .api_models import (
     DeleteDocumentIssue,
     DeleteDocumentsRequest,
     DeleteDocumentsResponse,
+    DedupeDocumentsResponse,
+    DuplicateGroupInfo,
     RunWorkersResponse,
 
     RunWorkersAcceptedResponse,
@@ -325,6 +328,77 @@ async def run_workers(request: Request, background_tasks: BackgroundTasks) -> Ru
     """
     background_tasks.add_task(_run_workers_in_background, request.app)
     return RunWorkersAcceptedResponse(status="started")
+
+@app.post("/api/admin/dedupe-documents", response_model=DedupeDocumentsResponse)
+async def dedupe_documents(request: Request, apply: bool = False) -> DedupeDocumentsResponse:
+    """
+    같은 filename + raw_text가 글자 하나까지 완전히 동일한 문서들을 찾아,
+    가장 먼저 인덱싱된 것 하나만 남기고 나머지를 정리한다.
+    apply=false(기본값)면 미리보기만 하고 실제로는 아무것도 지우지 않는다.
+    """
+    async with async_session_factory() as session:
+        result = await session.execute(select(Document))
+        docs = list(result.scalars().all())
+
+    candidates: dict[tuple[str, int], list[Document]] = defaultdict(list)
+    for d in docs:
+        if d.raw_text:
+            candidates[(d.filename, len(d.raw_text))].append(d)
+
+    duplicate_groups: list[list[Document]] = []
+    for group in candidates.values():
+        if len(group) < 2:
+            continue
+        by_text: dict[str, list[Document]] = defaultdict(list)
+        for d in group:
+            by_text[d.raw_text].append(d)
+        for dupes in by_text.values():
+            if len(dupes) >= 2:
+                duplicate_groups.append(sorted(dupes, key=lambda x: x.created_at))
+
+    groups_info: list[DuplicateGroupInfo] = []
+    documents_removed = 0
+
+    if apply:
+        vector_store: QdrantVectorStore = request.app.state.vector_store
+        async with async_session_factory() as session:
+            for group in duplicate_groups:
+                keep, *remove = group
+                groups_info.append(
+                    DuplicateGroupInfo(
+                        filename=keep.filename,
+                        kept_document_id=keep.id,
+                        removed_document_ids=[d.id for d in remove],
+                    )
+                )
+                for d in remove:
+                    chunks_result = await session.execute(
+                        select(DocumentChunk).where(DocumentChunk.document_id == d.id)
+                    )
+                    for chunk in chunks_result.scalars().all():
+                        await session.delete(chunk)
+                    await session.delete(d)
+                    await session.commit()
+                    await vector_store.delete_by_document_id(d.id)
+                    documents_removed += 1
+    else:
+        for group in duplicate_groups:
+            keep, *remove = group
+            groups_info.append(
+                DuplicateGroupInfo(
+                    filename=keep.filename,
+                    kept_document_id=keep.id,
+                    removed_document_ids=[d.id for d in remove],
+                )
+            )
+            documents_removed += len(remove)
+
+    return DedupeDocumentsResponse(
+        applied=apply,
+        groups_found=len(duplicate_groups),
+        documents_removed=documents_removed,
+        groups=groups_info,
+    )
 
 
 async def _run_workers_in_background(app: FastAPI) -> None:

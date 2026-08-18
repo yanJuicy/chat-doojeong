@@ -11,6 +11,7 @@ export default function LeftRail({
   onDeleteConversation,
   onOpenDocuments,
   documentCount,
+  onOpenReports,
   mobileOpen = false,
   onCloseMobile,
 }) {
@@ -46,6 +47,10 @@ export default function LeftRail({
           <span aria-hidden="true">▤</span>
           문서 관리
           <b>{documentCount}</b>
+        </button>
+        <button className="nav-item" type="button" onClick={onOpenReports}>
+          <span aria-hidden="true">📝</span>
+          업무 보고서
         </button>
         <button
           className="nav-item delete-chat"

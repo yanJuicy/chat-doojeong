@@ -40,10 +40,27 @@ class RunWorkersResponse(BaseModel):
     chunked: int
     embedded: int
 
+class DuplicateGroupInfo(BaseModel):
+    filename: str
+    kept_document_id: str
+    removed_document_ids: list[str]
+
+
+class DedupeDocumentsResponse(BaseModel):
+    applied: bool
+    groups_found: int
+    documents_removed: int
+    groups: list[DuplicateGroupInfo]
+
+
+class RunWorkersResponse(BaseModel):
+    extracted: int
+    chunked: int
+    embedded: int
+
 
 class RunWorkersAcceptedResponse(BaseModel):
     status: str
-
 
 class UpdateLabelsRequest(BaseModel):
     labels: list[str]

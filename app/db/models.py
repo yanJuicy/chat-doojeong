@@ -57,6 +57,7 @@ class Document(Base):
     extraction_quality_score: Mapped[float | None] = mapped_column(nullable=True)
     extraction_quality_details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 진단값
     extraction_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # raw_text의 SHA256, 자동 중복 감지용
     pipeline_version: Mapped[str | None] = mapped_column(String, nullable=True)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

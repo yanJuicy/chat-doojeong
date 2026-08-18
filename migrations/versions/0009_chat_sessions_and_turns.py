@@ -5,14 +5,8 @@
 달라서 건드리지 않고 새 테이블로 분리한다.
 
 Revision ID: 0009
-Revises: 0006
+Revises: 0008
 Create Date: 2026-08-18
-
-주의: 원래 이 마이그레이션은 down_revision="0008"(사위님의 Parent-Child 청킹/content_hash 중복제거,
-th-backend-compat 후반 커밋)이었다. 이 브랜치는 그 작업을 의도적으로 제외한 기준(95cc3e7 +
-이유빈님 출하보고서)이라 0007/0008이 체인에 없다. 0009는 chat_sessions/chat_turns 신규 테이블만
-만들고 0007/0008이 건드리는 어떤 컬럼도 참조하지 않아서, 0006 바로 위로 연결점만 옮겼다
-(실제 스키마 변경 내용은 원본과 동일).
 """
 from typing import Sequence, Union
 
@@ -20,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0009"
-down_revision: Union[str, None] = "0006"
+down_revision: Union[str, None] = "0008"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
