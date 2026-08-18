@@ -1,5 +1,8 @@
 # Chat Stream API 스펙
 
+> 멀티턴 대화용 `session_id` 선택 파라미터가 추가됐다. 이 문서는 단일 질문 계약만 다루고,
+> `session_id` 관련 차이(재작성, 대화 저장)는 `multi_turn_chat_api.md`를 참고.
+
 ## 1. 엔드포인트
 
 ```
