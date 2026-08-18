@@ -61,6 +61,26 @@ python scripts/audit_pdf_pages.py --summary-only "C:\path\to\pdf-folder"
 - `GET /api/chat/stream`: SSE 토큰 스트리밍
 - `POST /api/evaluation/run`: 콘솔 UI 없이 실행하는 회귀 평가 (`docs/EVALUATION.md` 참고)
 
+### 주간 업무보고서
+
+업무 메모를 자연어로 입력해 추출 초안을 확인·수정한 뒤 저장하고, 월요일~금요일 기준의
+금주 진행사항과 차주 계획을 미리보기에서 편집해 DOCX로 내려받을 수 있다. 제출일이
+앞당겨지면 `cutoff_date`를 해당 날짜로 지정한다.
+
+- `POST /api/work-entries/parse`: 자연어 업무 메모를 저장 전 초안으로 변환
+- `POST /api/work-items/bulk`: 확인한 업무 초안을 일괄 저장
+- `POST /api/reports/weekly/generate`: 기간·작성자·부서 기준 주간보고서 JSON 미리보기 생성
+- `POST /api/reports/weekly/documents`: 검토한 미리보기에서 DOCX 생성 및 이력 저장
+- `GET /api/reports/generated/{report_id}/download`: 생성 이력의 DOCX 재다운로드
+
+채팅에 `이번 주 주간보고서 작성해줘`라고 입력하면 동일한 주간보고서 모듈로 바로 연결된다.
+`출하보고서 작성해줘`는 출하보고서 모듈로 분류하며, 현재는 고객사·계획·실적 데이터가
+필요하다는 구조화된 안내를 반환한다. 기능 사용 전에는 새 테이블과 기본 DOCX 양식을 등록한다.
+
+```powershell
+alembic upgrade head
+```
+
 ## 이번 개선 사항
 
 적용 및 기존 문서 재처리 방법은 `docs/UPGRADE_20260809.md`, 변경 내역은 `PATCH_NOTES.md`를 확인한다.

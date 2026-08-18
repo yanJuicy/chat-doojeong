@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -34,6 +34,15 @@ class DocumentStatus(str, enum.Enum):
     CHUNKED = "chunked"        # 청킹 완료, 임베딩 전 (embedding_worker 대상)
     READY = "ready"            # 임베딩까지 완료, 검색 가능한 상태
     FAILED = "failed"          # 어느 단계에서든 실패 (error_message 참고)
+
+
+class WorkItemStatus(str, enum.Enum):
+    """사용자가 관리하는 업무의 현재 상태."""
+
+    PLANNED = "planned"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    ON_HOLD = "on_hold"
 
 
 class Document(Base):
@@ -107,4 +116,96 @@ class ChatLog(Base):
     question: Mapped[str] = mapped_column(Text, nullable=False)
     question_language: Mapped[str | None] = mapped_column(String, nullable=True)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkItem(Base):
+    """주간보고서의 근거가 되는 업무의 현재 상태."""
+
+    __tablename__ = "work_items"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    author: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[WorkItemStatus] = mapped_column(
+        Enum(WorkItemStatus, values_callable=lambda enum_cls: [member.value for member in enum_cls]),
+        default=WorkItemStatus.PLANNED,
+        nullable=False,
+        index=True,
+    )
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    carry_over: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    activities: Mapped[list["WorkActivity"]] = relationship(
+        back_populates="work_item",
+        cascade="all, delete-orphan",
+        order_by="WorkActivity.activity_date, WorkActivity.created_at",
+    )
+
+
+class WorkActivity(Base):
+    """특정 날짜에 실제로 수행한 업무 내용."""
+
+    __tablename__ = "work_activities"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    work_item_id: Mapped[str] = mapped_column(
+        ForeignKey("work_items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    activity_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[WorkItemStatus | None] = mapped_column(
+        Enum(WorkItemStatus, values_callable=lambda enum_cls: [member.value for member in enum_cls]),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    work_item: Mapped["WorkItem"] = relationship(back_populates="activities")
+
+
+class ReportTemplate(Base):
+    """보고서 양식 파일의 버전과 활성 상태를 관리하는 레지스트리."""
+
+    __tablename__ = "report_templates"
+    __table_args__ = (UniqueConstraint("report_type", "version", name="uq_report_templates_type_version"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    report_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    field_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GeneratedReport(Base):
+    """과거 제출 내용을 재현하기 위한 생성 보고서 스냅샷."""
+
+    __tablename__ = "generated_reports"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    report_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    cutoff_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    template_id: Mapped[str | None] = mapped_column(
+        ForeignKey("report_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    content_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

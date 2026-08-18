@@ -71,3 +71,8 @@ class ChatResponse(BaseModel):
     cache_hit: bool = False
     cache_similarity: float | None = None
     stage_timings: list[dict] = Field(default_factory=list)
+    action: str | None = None
+    report_type: str | None = None
+    report_id: str | None = None
+    download_url: str | None = None
+    missing_fields: list[str] = Field(default_factory=list)

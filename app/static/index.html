@@ -84,6 +84,27 @@
     outline: none;
     border-color: var(--accent);
   }
+  input[type="date"], select {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #fbfbfd;
+  }
+  .field-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .field label { display:block; margin-bottom:4px; font-size:11.5px; color:var(--text-muted); }
+  .weekly-layout { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .weekly-pane { min-width:0; padding:14px; border:1px solid var(--border); border-radius:8px; background:#fbfbfd; }
+  .weekly-pane h3 { margin:0 0 10px; font-size:13px; }
+  .draft-item { margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:7px; background:#fff; }
+  .report-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
+  .report-table th, .report-table td { border:1px solid var(--border); padding:7px; text-align:left; vertical-align:top; }
+  .report-table th { background:#f0f1f6; font-weight:600; }
+  @media (max-width: 760px) {
+    .weekly-layout, .field-grid { grid-template-columns:1fr; }
+  }
   button {
     margin-top: 10px;
     padding: 9px 16px;
@@ -176,14 +197,14 @@
 <body>
 
 <header>
-  <h1>RAG 챗봇 — 개발용 콘솔</h1>
-  <p>curl/PowerShell 없이 브라우저에서 바로 질문하고 문서를 넣어보는 확인용 화면입니다.</p>
+  <h1>RAG 챗봇 및 보고서 콘솔</h1>
+  <p>문서 질의와 업무 기록, 주간보고서 생성을 한 화면에서 확인할 수 있습니다.</p>
 </header>
 
 <main>
   <section class="card">
     <h2>질문하기</h2>
-    <p class="desc">문서를 넣은 뒤 질문하면 검색→리랭킹→답변 생성까지 실행됩니다.</p>
+    <p class="desc">일반 질문은 RAG로 답변하고, “이번 주 주간보고서 작성해줘” 같은 명령은 보고서 모듈로 연결됩니다.</p>
     <textarea id="question" rows="3" placeholder="예: 이 문서 내용을 요약해줘"></textarea>
     <button id="askBtn" onclick="askQuestion()">질문 보내기</button>
     <div id="answerBox" class="answer-box" style="display:none;"></div>
@@ -214,6 +235,43 @@
     <button id="uploadBtn" onclick="uploadFile()" disabled>업로드 및 처리 시작</button>
     <div id="docListCount" class="meta" style="margin-top:10px;"></div>
     <div class="doc-list" id="docList"></div>
+  </section>
+
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>주간 업무보고서</h2>
+    <p class="desc">자연어 업무 메모를 확인 후 저장하고, 금주 진행사항과 차주 계획을 미리본 뒤 DOCX로 내려받습니다.</p>
+    <div class="weekly-layout">
+      <div class="weekly-pane">
+        <h3>1. 업무 기록</h3>
+        <div class="field-grid">
+          <div class="field"><label for="workAuthor">작성자</label><input id="workAuthor" type="text" placeholder="홍길동"></div>
+          <div class="field"><label for="workDepartment">부서</label><input id="workDepartment" type="text" placeholder="개발팀"></div>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label for="workNaturalText">업무 메모</label>
+          <textarea id="workNaturalText" rows="4" placeholder="예: 오늘 주간보고서 집계 기능을 완료했고 다음 주에는 화면 개발을 진행할 계획이야."></textarea>
+        </div>
+        <button id="parseWorkBtn" onclick="parseWorkEntry()">업무 초안 만들기</button>
+        <div id="workDrafts"></div>
+        <div id="workSaveMessage" class="meta"></div>
+      </div>
+
+      <div class="weekly-pane">
+        <h3>2. 보고서 생성</h3>
+        <div class="field-grid">
+          <div class="field"><label for="weeklyStart">보고 시작일(월)</label><input id="weeklyStart" type="date"></div>
+          <div class="field"><label for="weeklyCutoff">작성 기준일</label><input id="weeklyCutoff" type="date"></div>
+          <div class="field"><label for="weeklyAuthor">작성자 필터</label><input id="weeklyAuthor" type="text" placeholder="비워두면 전체"></div>
+          <div class="field"><label for="weeklyDepartment">부서 필터</label><input id="weeklyDepartment" type="text" placeholder="비워두면 전체"></div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="weeklyPreviewBtn" onclick="generateWeeklyPreview()">미리보기</button>
+          <button id="weeklyDocxBtn" class="secondary" onclick="downloadWeeklyDocx()" disabled>DOCX 다운로드</button>
+        </div>
+        <div id="weeklyWarnings" class="meta"></div>
+        <div id="weeklyPreview"></div>
+      </div>
+    </div>
   </section>
 
   <section class="card" style="grid-column: 1 / -1;">
@@ -366,6 +424,17 @@ function renderChatResult(data) {
         openFileViewer(chip.dataset.docId, chip.dataset.filename);
       });
     });
+  }
+  if (data.download_url) {
+    sourcesBox.insertAdjacentHTML(
+      'beforeend',
+      `<div style="margin-top:8px;"><a href="${data.download_url}" style="display:inline-block; padding:8px 14px; border-radius:6px; background:var(--accent); color:#fff; text-decoration:none; font-size:13px; font-weight:600;">DOCX 다운로드</a></div>`
+    );
+  } else if (data.missing_fields && data.missing_fields.length) {
+    sourcesBox.insertAdjacentHTML(
+      'beforeend',
+      `<div class="meta" style="margin-top:6px;">필요한 입력: ${data.missing_fields.join(', ')}</div>`
+    );
   }
 
   // 진단 정보 — 결론만이 아니라 항상 실제 유사율 수치를 같이 보여준다
@@ -946,6 +1015,240 @@ function closeFileViewer() {
 document.getElementById('fileViewerOverlay').addEventListener('click', (e) => {
   if (e.target.id === 'fileViewerOverlay') closeFileViewer(); // 바깥 클릭 시 닫기
 });
+</script>
+
+<script>
+let parsedWorkDrafts = [];
+let weeklyPreviewData = null;
+
+function escapeWeekly(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formatLocalDate(value) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function addLocalDays(isoDate, count) {
+  const value = new Date(`${isoDate}T00:00:00`);
+  value.setDate(value.getDate() + count);
+  return formatLocalDate(value);
+}
+
+function setWeeklyDefaults() {
+  const today = new Date();
+  const monday = new Date(today);
+  const offset = (today.getDay() + 6) % 7;
+  monday.setDate(today.getDate() - offset);
+  document.getElementById('weeklyStart').value = formatLocalDate(monday);
+  document.getElementById('weeklyCutoff').value = formatLocalDate(today > new Date(monday.getTime() + 4 * 86400000) ? new Date(monday.getTime() + 4 * 86400000) : today);
+}
+
+function renderWorkDrafts() {
+  const box = document.getElementById('workDrafts');
+  if (!parsedWorkDrafts.length) {
+    box.innerHTML = '<div class="meta" style="margin-top:8px;">추출된 업무가 없습니다.</div>';
+    return;
+  }
+  box.innerHTML = parsedWorkDrafts.map((draft, index) => `
+    <div class="draft-item">
+      <div class="field-grid">
+        <div class="field"><label>업무명</label><input id="draftTitle${index}" type="text" value="${escapeWeekly(draft.title)}"></div>
+        <div class="field"><label>상태</label><select id="draftStatus${index}">
+          ${['planned','in_progress','completed','on_hold'].map(status => `<option value="${status}" ${draft.status === status ? 'selected' : ''}>${status}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>업무 구분</label><input id="draftCategory${index}" type="text" value="${escapeWeekly(draft.category)}"></div>
+        <div class="field"><label>예정일</label><input id="draftDue${index}" type="date" value="${escapeWeekly(draft.due_date)}"></div>
+      </div>
+      <div class="field" style="margin-top:8px;"><label>결과 및 특이사항</label><input id="draftResult${index}" type="text" value="${escapeWeekly(draft.result)}"></div>
+      <div class="field" style="margin-top:8px;"><label>다음 작업</label><input id="draftNext${index}" type="text" value="${escapeWeekly(draft.next_action)}"></div>
+    </div>
+  `).join('') + '<button onclick="confirmWorkDrafts()">확인 후 저장</button>';
+}
+
+async function parseWorkEntry() {
+  const text = document.getElementById('workNaturalText').value.trim();
+  if (!text) return;
+  const button = document.getElementById('parseWorkBtn');
+  button.disabled = true;
+  button.textContent = '업무 추출 중...';
+  try {
+    const response = await fetch('/api/work-entries/parse', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        text,
+        reference_date: formatLocalDate(new Date()),
+        author: document.getElementById('workAuthor').value.trim() || null,
+        department: document.getElementById('workDepartment').value.trim() || null,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || '업무 추출 실패');
+    parsedWorkDrafts = data.drafts;
+    renderWorkDrafts();
+    document.getElementById('workSaveMessage').textContent = (data.warnings || []).join(' ');
+  } catch (error) {
+    document.getElementById('workSaveMessage').textContent = `오류: ${error.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = '업무 초안 만들기';
+  }
+}
+
+async function confirmWorkDrafts() {
+  const author = document.getElementById('workAuthor').value.trim() || null;
+  const department = document.getElementById('workDepartment').value.trim() || null;
+  const items = parsedWorkDrafts.map((draft, index) => ({
+    title: document.getElementById(`draftTitle${index}`).value.trim(),
+    category: document.getElementById(`draftCategory${index}`).value.trim() || null,
+    author,
+    department,
+    status: document.getElementById(`draftStatus${index}`).value,
+    start_date: draft.start_date || null,
+    due_date: document.getElementById(`draftDue${index}`).value || null,
+    result: document.getElementById(`draftResult${index}`).value.trim() || null,
+    next_action: document.getElementById(`draftNext${index}`).value.trim() || null,
+    carry_over: Boolean(draft.carry_over),
+  }));
+  try {
+    const response = await fetch('/api/work-items/bulk', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({items}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || '업무 저장 실패');
+    document.getElementById('workSaveMessage').textContent = `${data.length}개 업무를 저장했습니다.`;
+    parsedWorkDrafts = [];
+    document.getElementById('workDrafts').innerHTML = '';
+    document.getElementById('workNaturalText').value = '';
+    document.getElementById('weeklyAuthor').value = author || '';
+    document.getElementById('weeklyDepartment').value = department || '';
+  } catch (error) {
+    document.getElementById('workSaveMessage').textContent = `오류: ${error.message}`;
+  }
+}
+
+function weeklyReportRequest() {
+  const start = document.getElementById('weeklyStart').value;
+  const cutoff = document.getElementById('weeklyCutoff').value;
+  if (!start || !cutoff) throw new Error('보고 시작일과 작성 기준일을 입력하세요.');
+  return {
+    period_start: start,
+    period_end: addLocalDays(start, 4),
+    cutoff_date: cutoff,
+    author: document.getElementById('weeklyAuthor').value.trim() || null,
+    department: document.getElementById('weeklyDepartment').value.trim() || null,
+  };
+}
+
+function renderWeeklyPreview(report) {
+  const currentRows = report.current_week.map((item, index) => `
+    <tr>
+      <td><input data-current-category="${index}" type="text" value="${escapeWeekly(item.category || '')}"></td>
+      <td><input data-current-title="${index}" type="text" value="${escapeWeekly(item.title)}"></td>
+      <td><select data-current-status="${index}">${['planned','in_progress','completed','on_hold'].map(status => `<option value="${status}" ${item.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select></td>
+      <td><input data-current-result="${index}" type="text" value="${escapeWeekly([...item.activity_details, ...(item.result && !item.activity_details.includes(item.result) ? [item.result] : [])].join(' / '))}"></td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">등록된 내용 없음</td></tr>';
+  const nextRows = report.next_week.map((item, index) => `
+    <tr>
+      <td><input data-next-category="${index}" type="text" value="${escapeWeekly(item.category || '')}"></td>
+      <td><input data-next-plan="${index}" type="text" value="${escapeWeekly(item.plan)}"></td>
+      <td><input data-next-target="${index}" type="date" value="${escapeWeekly(item.target_date || '')}"></td>
+      <td style="text-align:center;"><input data-next-carry="${index}" type="checkbox" ${item.carry_over ? 'checked' : ''}> 이월</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4">등록된 내용 없음</td></tr>';
+  document.getElementById('weeklyPreview').innerHTML = `
+    <div class="meta" style="margin-top:10px;">표의 내용을 수정한 뒤 DOCX로 내려받을 수 있습니다.</div>
+    <h3 style="margin-top:14px;">금주 진행사항</h3>
+    <table class="report-table"><thead><tr><th>구분</th><th>업무</th><th>상태</th><th>결과</th></tr></thead><tbody>${currentRows}</tbody></table>
+    <h3 style="margin-top:14px;">차주 진행 계획</h3>
+    <table class="report-table"><thead><tr><th>구분</th><th>계획</th><th>목표일</th><th>비고</th></tr></thead><tbody>${nextRows}</tbody></table>
+  `;
+  document.getElementById('weeklyWarnings').textContent = (report.warnings || []).join(' ');
+}
+
+function syncWeeklyPreviewFromDom() {
+  if (!weeklyPreviewData) return;
+  weeklyPreviewData.current_week.forEach((item, index) => {
+    item.category = document.querySelector(`[data-current-category="${index}"]`).value.trim() || null;
+    item.title = document.querySelector(`[data-current-title="${index}"]`).value.trim();
+    item.status = document.querySelector(`[data-current-status="${index}"]`).value;
+    const result = document.querySelector(`[data-current-result="${index}"]`).value.trim();
+    item.activity_details = result ? [result] : [];
+    item.result = null;
+  });
+  weeklyPreviewData.next_week.forEach((item, index) => {
+    item.category = document.querySelector(`[data-next-category="${index}"]`).value.trim() || null;
+    item.plan = document.querySelector(`[data-next-plan="${index}"]`).value.trim();
+    item.target_date = document.querySelector(`[data-next-target="${index}"]`).value || null;
+    item.carry_over = document.querySelector(`[data-next-carry="${index}"]`).checked;
+  });
+}
+
+async function generateWeeklyPreview() {
+  const button = document.getElementById('weeklyPreviewBtn');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/reports/weekly/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(weeklyReportRequest()),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || '주간보고서 집계 실패');
+    weeklyPreviewData = data;
+    renderWeeklyPreview(data);
+    document.getElementById('weeklyDocxBtn').disabled = false;
+  } catch (error) {
+    document.getElementById('weeklyWarnings').textContent = `오류: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function downloadWeeklyDocx() {
+  if (!weeklyPreviewData) return;
+  syncWeeklyPreviewFromDom();
+  const button = document.getElementById('weeklyDocxBtn');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/reports/weekly/documents', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(weeklyPreviewData),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.detail || 'DOCX 생성 실패');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `weekly-report-${weeklyPreviewData.period_start}-${weeklyPreviewData.period_end}.docx`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    document.getElementById('weeklyWarnings').textContent = `오류: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+window.addEventListener('DOMContentLoaded', setWeeklyDefaults);
 </script>
 
 </body>

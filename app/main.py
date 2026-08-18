@@ -62,8 +62,11 @@ from .core.structured_chunker import StructuredChunker
 from .core.similarity_utils import cosine_similarity
 from .db.models import ChatLog, Document, DocumentChunk, DocumentLabel, DocumentStatus
 from .db.session import async_session_factory
-from .report_api import create_shipment_report_router
+from .report_api import create_shipment_report_router, create_weekly_report_router
+from .reports.command_handlers import create_report_dispatcher
+from .reports.common import DispatchStatus, parse_report_command
 from .routers.evaluation import create_evaluation_router
+from .routers.work_items import create_work_item_router
 from .workers import chunking_worker, embedding_worker, extraction_worker
 from .zip_ingestion import process_zip_bytes
 
@@ -740,6 +743,51 @@ async def _run_chat_pipeline(
     current_stage = "초기화"
     stage_timings: list[dict] = []
 
+    # 보고서 생성 명령은 문서 검색·캐시·GPU 경로보다 먼저 처리한다. 보고서는 최신 업무 DB를
+    # 사용해야 하므로 일반 질문 캐시에 넣지 않으며, RAG 검색 결과에도 의존하지 않는다.
+    report_command = parse_report_command(body.question)
+    if report_command is not None:
+        current_stage = "보고서 명령 처리"
+        yield ("progress", current_stage + " 중...")
+        t0 = time.monotonic()
+        try:
+            dispatched = await create_report_dispatcher(async_session_factory).dispatch(report_command)
+            stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
+            yield ("timing", stage_timings[-1])
+            action = (
+                "report_generated"
+                if dispatched.status == DispatchStatus.GENERATED
+                else "report_needs_input"
+            )
+            response = ChatResponse(
+                answer=dispatched.message,
+                question_language="ko",
+                n_context_chunks=0,
+                stage_timings=stage_timings,
+                action=action,
+                report_type=dispatched.report_type.value,
+                report_id=dispatched.report_id,
+                download_url=dispatched.download_url,
+                missing_fields=dispatched.missing_fields,
+            )
+            async with async_session_factory() as session:
+                session.add(
+                    ChatLog(
+                        question=body.question,
+                        question_language="ko",
+                        answer=dispatched.message,
+                    )
+                )
+                await session.commit()
+            yield ("result", response)
+        except Exception as exc:
+            logger.error("보고서 명령 처리 실패: %s", exc, exc_info=True)
+            yield (
+                "error",
+                {"stage": current_stage, "message": str(exc), "stage_timings": stage_timings},
+            )
+        return
+
     # 백그라운드 워커(임베딩/청킹의 LLM 자동 라벨링)와 GPU를 동시에 잡지 않도록 직렬화한다.
     # 답변 생성이 끝날 때까지(스트리밍 도중 끊겨도 finally에서) 잠금을 들고 있는다.
     gpu_lock: asyncio.Lock = request.app.state.gpu_lock
@@ -1086,3 +1134,5 @@ app.include_router(create_evaluation_router(_run_chat_pipeline))
 
 # Shipment report generation is isolated from the RAG pipeline and shares only this server.
 app.include_router(create_shipment_report_router())
+app.include_router(create_work_item_router())
+app.include_router(create_weekly_report_router())

@@ -16,3 +16,5 @@ backups/
 releases/
 wheelhouse/
 eval/
+reports/generated/
+reports/qa/
