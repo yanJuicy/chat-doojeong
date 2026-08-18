@@ -88,7 +88,6 @@ async def process_pending_chunks(
                     "image_path": chunk.image_path,
                     "page_number": chunk.page_number,
                     "filename": document.filename if document else None,
-                    "category": document.category if document else None,
                     "labels": labels_by_document.get(chunk.document_id, []),
                     "pipeline_version": document.pipeline_version if document else None,
                     "parent_text": chunk.parent_text,  # Parent-Child 청킹: 답변 생성 시 text 대신 이걸 우선 사용
