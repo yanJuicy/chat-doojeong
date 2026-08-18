@@ -114,7 +114,12 @@ export default function useChat() {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const data = await streamQuestion(value, {
+      // conversationId를 백엔드의 session_id로 그대로 전달한다. 백엔드는 이 값으로 이전 대화를
+      // 조회해서 "그럼 무게는?" 같은 후속 질문을 standalone 질문으로 재작성한 뒤 검색한다
+      // (docs/hanju/api/multi_turn_chat_api.md 참고). 지금 이 conversationId는 화면(localStorage)
+      // 표시용으로만 쓰이던 값인데, 이제 백엔드 대화 맥락 조회에도 같이 쓰이는 것 — 대화창을
+      // 새로 만들면(startNewChat) 새 id가 생기니 그 시점부터 새 대화로 취급된다.
+      const data = await streamQuestion(value, conversationId, {
         signal: controller.signal,
         onEvent: (streamEvent) => {
           updateMessages(conversationId, (current) =>

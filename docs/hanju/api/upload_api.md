@@ -5,7 +5,12 @@
 ```
 POST /api/v1/upload
 GET  /api/v1/documents/{document_id}
+POST /api/documents/upload-zip
 ```
+
+`upload-zip`만 `/api/v1` prefix가 아니라 `main.py`에 직접 정의된 레거시 경로다 (5절 참고).
+단일 파일 업로드와 zip 업로드는 프론트에서 같은 화면(파일 드롭)을 쓰지만 내부적으로 서로 다른
+엔드포인트·응답 형식을 호출하므로 헷갈리지 않게 주의.
 
 업로드 후 곧바로 검색 가능한 게 아니다 — 파일 저장/등록만 끝난 상태(`status: "uploaded"`)로
 응답이 오고, OCR → 청킹 → 임베딩 처리는 서버가 백그라운드에서 이어서 진행한다. 프론트는
@@ -167,3 +172,47 @@ uploaded → extracting → extracted → chunked → ready   ← 이 상태부�
   }
 }
 ```
+
+## 5. `POST /api/documents/upload-zip` (일괄 업로드)
+
+zip 파일 하나를 받아 안의 PDF/Word/텍스트/HTML을 전부 찾아 자동으로 업로드 등록한다 (중첩 압축도
+재귀적으로 풀어서 찾음, 압축 안 폴더 구조는 무시하고 파일명만 사용).
+
+**단일 업로드와의 차이 두 가지**:
+1. 봉투(`success`/`data`) 없이 그대로 반환한다 — `/api/v1/upload`와 응답 형식이 다르다.
+2. `labels` 파라미터 자체가 없다. 공통 라벨을 zip 안 문서들에 한 번에 적용하는 기능은 아직 없음
+   (프론트도 zip 업로드일 때는 항목별 라벨 입력을 숨기고, 공통 라벨 일괄 적용도 `.zip` 항목은
+   건너뛴다 — `UploadItem.jsx`, `useDocuments.js`의 `applyCommonLabels`).
+3. 등록만 하고 처리(OCR→청킹→임베딩)를 자동으로 시작하지 않는다 — `/api/v1/upload`와 달리
+   업로드 후 프론트가 `POST /api/admin/run-workers`를 직접 호출해야 한다
+   (`admin_run_workers_api.md` 참고).
+
+### 요청 예시
+
+```bash
+curl -X POST "http://localhost:8000/api/documents/upload-zip" \
+  -F "file=@documents.zip"
+```
+
+### 응답 — 성공 (`200`)
+
+```json
+{
+  "created": [
+    { "document_id": "string", "filename": "manual.pdf", "is_duplicate": false }
+  ],
+  "skipped": ["unsupported_file.exe"]
+}
+```
+
+| 필드 | 설명 |
+|---|---|
+| `created[].is_duplicate` | 이미 등록된 파일(해시 일치)이면 `true`, 새로 등록됐으면 `false` |
+| `skipped` | zip 안에 있었지만 지원하지 않는 확장자라 건너뛴 파일명 목록 |
+
+### 응답 — 실패
+
+| 상황 | 상태 코드 |
+|---|---|
+| `.zip`이 아닌 파일 | `400` |
+| 압축 해제 후 총 용량이 `max_zip_total_uncompressed_mb` 초과 | `413` |

@@ -50,9 +50,13 @@ async function parseV1Response(response) {
   return payload?.data;
 }
 
-export async function streamQuestion(question, { signal, onEvent } = {}) {
+export async function streamQuestion(question, sessionId, { signal, onEvent } = {}) {
   const query = encodeURIComponent(question);
-  const response = await fetch(apiUrl(`/api/v1/chat-stream?question=${query}`), {
+  // sessionId는 지금 열려있는 대화(conversation)의 id를 그대로 재사용한다 (utils/conversations.js
+  // 에서 이미 만들어짐). 백엔드는 이 값으로 멀티턴 대화 이력을 조회해 후속 질문("그럼 무게는?")을
+  // 재작성한다 — sessionId가 없으면 백엔드는 오늘까지의 싱글턴 방식으로 그대로 동작한다.
+  const sessionParam = sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : "";
+  const response = await fetch(apiUrl(`/api/v1/chat-stream?question=${query}${sessionParam}`), {
     headers: { Accept: "text/event-stream" },
     signal,
   });
