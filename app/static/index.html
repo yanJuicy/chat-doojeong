@@ -1020,6 +1020,18 @@ document.getElementById('fileViewerOverlay').addEventListener('click', (e) => {
 <script>
 let parsedWorkDrafts = [];
 let weeklyPreviewData = null;
+const WORK_STATUS_LABELS = {
+  planned: '예정',
+  in_progress: '진행 중',
+  completed: '완료',
+  on_hold: '보류',
+};
+
+function workStatusOptions(selectedStatus) {
+  return Object.entries(WORK_STATUS_LABELS)
+    .map(([value, label]) => `<option value="${value}" ${selectedStatus === value ? 'selected' : ''}>${label}</option>`)
+    .join('');
+}
 
 function escapeWeekly(value) {
   return String(value ?? '')
@@ -1063,7 +1075,7 @@ function renderWorkDrafts() {
       <div class="field-grid">
         <div class="field"><label>업무명</label><input id="draftTitle${index}" type="text" value="${escapeWeekly(draft.title)}"></div>
         <div class="field"><label>상태</label><select id="draftStatus${index}">
-          ${['planned','in_progress','completed','on_hold'].map(status => `<option value="${status}" ${draft.status === status ? 'selected' : ''}>${status}</option>`).join('')}
+          ${workStatusOptions(draft.status)}
         </select></div>
         <div class="field"><label>업무 구분</label><input id="draftCategory${index}" type="text" value="${escapeWeekly(draft.category)}"></div>
         <div class="field"><label>예정일</label><input id="draftDue${index}" type="date" value="${escapeWeekly(draft.due_date)}"></div>
@@ -1156,7 +1168,7 @@ function renderWeeklyPreview(report) {
     <tr>
       <td><input data-current-category="${index}" type="text" value="${escapeWeekly(item.category || '')}"></td>
       <td><input data-current-title="${index}" type="text" value="${escapeWeekly(item.title)}"></td>
-      <td><select data-current-status="${index}">${['planned','in_progress','completed','on_hold'].map(status => `<option value="${status}" ${item.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select></td>
+      <td><select data-current-status="${index}">${workStatusOptions(item.status)}</select></td>
       <td><input data-current-result="${index}" type="text" value="${escapeWeekly([...item.activity_details, ...(item.result && !item.activity_details.includes(item.result) ? [item.result] : [])].join(' / '))}"></td>
     </tr>
   `).join('') || '<tr><td colspan="4">등록된 내용 없음</td></tr>';

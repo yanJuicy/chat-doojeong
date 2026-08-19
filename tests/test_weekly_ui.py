@@ -17,6 +17,8 @@ class WeeklyUiContractTest(unittest.TestCase):
             "function generateWeeklyPreview()",
             "function syncWeeklyPreviewFromDom()",
             "function downloadWeeklyDocx()",
+            "in_progress: '진행 중'",
+            "function workStatusOptions(selectedStatus)",
             "'/api/work-entries/parse'",
             "'/api/work-items/bulk'",
             "'/api/reports/weekly/generate'",
