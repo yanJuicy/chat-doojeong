@@ -8,7 +8,8 @@
 #>
 param(
     [string]$VenvPath = "C:\v\rag_latest",
-    [int]$Port = 8000
+    [int]$Port = 8000,
+    [int]$FrontendPort = 5173
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,7 @@ if (Test-RagPortOpen $Port) {
         }
         if ($allChecksOk) {
             Write-Host "RAG is already running and healthy at http://127.0.0.1:$Port" -ForegroundColor Green
+            Start-RagFrontendIfNeeded -FrontendPort $FrontendPort
             exit 0
         }
     } catch {}
@@ -68,6 +70,8 @@ if (-not (Test-OllamaModelInstalled $llmModel)) {
 
 & $venvPython -m alembic upgrade head
 Assert-LastExitCode "Alembic migration"
+
+Start-RagFrontendIfNeeded -FrontendPort $FrontendPort
 
 Write-Host "Starting Uvicorn at http://127.0.0.1:$Port (Ctrl+C to stop)" -ForegroundColor Green
 & $venvPython -m uvicorn app.main:app --host 127.0.0.1 --port $Port

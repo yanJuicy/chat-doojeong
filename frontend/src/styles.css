@@ -660,3 +660,70 @@ a { color: inherit; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+.weekly-report-drawer { width: min(640px, 96vw); }
+.weekly-report-body { min-height: 0; padding: 22px 26px; overflow-y: auto; }
+
+.weekly-report-field { display: block; margin-bottom: 16px; }
+.weekly-report-field span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 9px; font-weight: 800; }
+.weekly-report-field input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 11px;
+  background: #fff;
+}
+
+.weekly-report-composer { width: 100%; margin: 0 0 24px; }
+
+.weekly-report-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.weekly-report-list { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: #fff; }
+.weekly-report-list h3 { margin: 0 0 10px; font-size: 10.5px; }
+.weekly-report-list h3 span { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; font-weight: 500; }
+.weekly-report-list ul { margin: 0; padding: 0; list-style: none; }
+.weekly-report-empty { margin: 0; color: var(--muted); font-size: 9px; }
+
+.weekly-report-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.weekly-report-entry span { flex: 1; min-width: 0; color: var(--ink); font-size: 10px; line-height: 1.5; cursor: text; }
+.weekly-report-entry button {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+  color: var(--muted);
+  background: #fff;
+  font-size: 8px;
+}
+.weekly-report-entry button:hover { color: var(--ink); }
+.weekly-report-entry.editing input {
+  flex: 1;
+  border: 1px solid #93aa60;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+
+.weekly-report-upload-button {
+  border: 1px dashed var(--line) !important;
+  border-radius: 8px !important;
+  padding: 7px 10px !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+  font-size: 8px !important;
+  font-weight: 700 !important;
+  white-space: nowrap;
+}
+.weekly-report-upload-button:not(:disabled):hover { color: var(--ink) !important; border-color: #93aa60 !important; }
+
+@media (max-width: 720px) {
+  .weekly-report-drawer { width: 100vw; }
+  .weekly-report-lists { grid-template-columns: 1fr; }
+}

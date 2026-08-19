@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     pdf_native_quality_min_score: float = 0.20  # 텍스트 레이어가 길어도 깨진 결과면 OCR로 전환
     pdf_mixed_image_coverage: float = 0.55  # 페이지에서 큰 이미지가 이 비율 이상이면 혼합 페이지 후보
     pdf_mixed_max_native_chars: int = 400  # 제목 수준 텍스트+큰 이미지일 때 이미지 내부 OCR 병행
+    pdf_native_table_detection_enabled: bool = True  # 디지털 텍스트 페이지에서도 find_tables()로 표 격자를 감지해 TABLE_BLOCK으로 보존
     ocr_table_detection_enabled: bool = True  # 켜면 표가 있어 보이는 페이지만 무거운 PPStructureV3, 나머지는 경량 OCR
     ocr_page_cache_enabled: bool = True  # 같은 파일(해시)+같은 페이지+같은 DPI를 재처리할 때 OCR을 다시 안 돌림
     ocr_cache_dir: str = "./uploaded_files/ocr_cache"  # 페이지 OCR 결과 캐시 저장 위치

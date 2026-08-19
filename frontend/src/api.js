@@ -241,6 +241,65 @@ export function documentFileUrl(documentId, pageNumber) {
     : url;
 }
 
+export async function submitWeeklyReportChat({ department, text, currentPeriod, nextPeriod }) {
+  const response = await fetch(apiUrl("/api/v1/work-reports/chat-entry"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      department,
+      text,
+      current_period_start: currentPeriod.start,
+      current_period_end: currentPeriod.end,
+      next_period_start: nextPeriod.start,
+      next_period_end: nextPeriod.end,
+    }),
+  });
+  return parseV1Response(response);
+}
+
+export async function getWeeklyReportEntries({ start, end, department } = {}, signal) {
+  const params = new URLSearchParams();
+  if (start) params.set("start", start);
+  if (end) params.set("end", end);
+  if (department) params.set("department", department);
+  const query = params.toString();
+  const response = await fetch(
+    apiUrl(`/api/v1/work-reports${query ? `?${query}` : ""}`),
+    { signal },
+  );
+  return parseV1Response(response);
+}
+
+export async function updateWeeklyReportEntry(entryId, content) {
+  const response = await fetch(
+    apiUrl(`/api/v1/work-reports/${encodeURIComponent(entryId)}`),
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  return parseV1Response(response);
+}
+
+export async function deleteWeeklyReportEntry(entryId) {
+  const response = await fetch(
+    apiUrl(`/api/v1/work-reports/${encodeURIComponent(entryId)}`),
+    { method: "DELETE" },
+  );
+  return parseV1Response(response);
+}
+
+export async function uploadWeeklyReportDocument(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(apiUrl("/api/v1/work-reports/upload-document"), {
+    method: "POST",
+    body: formData,
+  });
+  return parseV1Response(response);
+}
+
 export function assetUrl(path) {
   if (!path || /^(https?:|data:|blob:)/i.test(path)) return path;
   return apiUrl(path.startsWith("/") ? path : `/${path}`);

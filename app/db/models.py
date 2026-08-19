@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -161,3 +161,49 @@ class ChatTurn(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["ChatSession"] = relationship(back_populates="turns")
+
+
+class WorkReportEntry(Base):
+    """
+    주간(추후 월간도 가능) 업무보고 원자료 항목 하나. 채팅으로 직접 입력하거나 기존
+    보고서 문서(표)를 업로드해서 추출한 뒤, 정제(문체 정규화)를 거쳐 여기 저장된다.
+
+    "구분"(사업/관리/시군특화... 등 원본 문서마다 다를 수 있는 값)은 고정 enum으로
+    만들지 않는다. 최종 보고서를 뽑을 타겟 양식의 구분 체계가 원본과 다를 수 있어서
+    (예: 원본은 구분 3개, 타겟 양식은 구분 1개), 저장 시점엔 source_category에 원본
+    표기를 느슨한 태그로만 보존하고, 실제로 어느 칸에 넣을지는 보고서 생성 시점에
+    타겟 양식을 보고 결정한다 (다대일 병합은 정보 손실 없이 가능, 반대로 저장 시점에
+    미리 못 박아두면 나중에 다른 구분 체계의 양식이 필요할 때 재분류가 필요해짐).
+    """
+
+    __tablename__ = "work_report_entries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    department: Mapped[str] = mapped_column(String)
+
+    # "실적" 또는 "계획"
+    entry_type: Mapped[str] = mapped_column(String)
+
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+
+    # 원본 문서/채팅에서 온 구분 표기 (예: "사업", "관리", "시군특화일자리사업단"). 느슨한
+    # 태그일 뿐 스키마로 강제하지 않는다 — 위 클래스 docstring 참고.
+    source_category: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # 정제 파이프라인을 거쳐 격식체 짧은 문장("~완료/~실시" 등)으로 다듬어진 최종 문장.
+    content: Mapped[str] = mapped_column(Text)
+
+    # "chat" 또는 "document"
+    source: Mapped[str] = mapped_column(String)
+
+    # source=document일 때만 채워짐. 문서가 삭제돼도 과거에 뽑아둔 보고 항목은 남아있어야
+    # 하므로(이미 확정 제출된 보고서의 근거 자료), FK 제약을 걸지 않고 참조 정보로만 둔다.
+    source_document_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # source=chat일 때 사용자가 실제로 입력한 원문. 정제 결과(content)가 의심스러울 때
+    # 원문과 대조해서 검증/수정할 수 있게 남겨둔다.
+    raw_input: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

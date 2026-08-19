@@ -1,0 +1,81 @@
+"""
+work_report_entries에 쌓인 항목을 모아 타겟 양식(구분 1개: "사업관리")에 맞는
+주간보고서 뷰로 조립한다.
+
+원본 문서 경로에서 저장된 항목은 source_category(사업/관리/시군특화 등)가 붙어 있지만,
+타겟 양식은 구분이 하나뿐이라 여기서 그 태그를 무시하고 실적/계획으로만 나눠 합친다
+(다대일 병합이라 정보 손실 없이 가능 — DB 모델 docstring 참고).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+
+from sqlalchemy import select
+
+from ..db.models import WorkReportEntry
+from ..db.session import async_session_factory
+
+
+@dataclass
+class ReportItem:
+    id: str
+    content: str
+
+
+@dataclass
+class ReportPeriodBlock:
+    period_start: date
+    period_end: date
+    items: list[ReportItem]
+
+
+@dataclass
+class WeeklyReportView:
+    department: str
+    current_week: ReportPeriodBlock
+    next_week: ReportPeriodBlock
+
+
+async def compose_weekly_report(
+    department: str,
+    current_period: tuple[date, date],
+    next_period: tuple[date, date],
+) -> WeeklyReportView:
+    async with async_session_factory() as session:
+        current_result = await session.execute(
+            select(WorkReportEntry)
+            .where(
+                WorkReportEntry.department == department,
+                WorkReportEntry.entry_type == "실적",
+                WorkReportEntry.period_start == current_period[0],
+                WorkReportEntry.period_end == current_period[1],
+            )
+            .order_by(WorkReportEntry.created_at)
+        )
+        next_result = await session.execute(
+            select(WorkReportEntry)
+            .where(
+                WorkReportEntry.department == department,
+                WorkReportEntry.entry_type == "계획",
+                WorkReportEntry.period_start == next_period[0],
+                WorkReportEntry.period_end == next_period[1],
+            )
+            .order_by(WorkReportEntry.created_at)
+        )
+        current_entries = current_result.scalars().all()
+        next_entries = next_result.scalars().all()
+
+    return WeeklyReportView(
+        department=department,
+        current_week=ReportPeriodBlock(
+            period_start=current_period[0],
+            period_end=current_period[1],
+            items=[ReportItem(id=e.id, content=e.content) for e in current_entries],
+        ),
+        next_week=ReportPeriodBlock(
+            period_start=next_period[0],
+            period_end=next_period[1],
+            items=[ReportItem(id=e.id, content=e.content) for e in next_entries],
+        ),
+    )

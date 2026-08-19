@@ -1,23 +1,25 @@
 import { useState } from "react";
 import ChatWorkspace from "./components/chat/ChatWorkspace";
 import DocumentDrawer from "./components/documents/DocumentDrawer";
-import DailyReportDrawer from "./components/reports/DailyReportDrawer";
 import LeftRail from "./components/layout/LeftRail";
 import MobileSourcePanel from "./components/sources/MobileSourcePanel";
 import SourceRail from "./components/sources/SourceRail";
+import WeeklyReportDrawer from "./components/weekly-report/WeeklyReportDrawer";
 import useChat from "./hooks/useChat";
 import useDocuments from "./hooks/useDocuments";
 import useServerHealth from "./hooks/useServerHealth";
 import useToast from "./hooks/useToast";
+import useWeeklyReport from "./hooks/useWeeklyReport";
 
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [reportsOpen, setReportsOpen] = useState(false);
+  const [weeklyReportOpen, setWeeklyReportOpen] = useState(false);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
   const { toast, showToast } = useToast();
   const health = useServerHealth();
   const chat = useChat();
   const documents = useDocuments(showToast);
+  const weeklyReport = useWeeklyReport(showToast);
   const readyDocumentCount = documents.documents.filter(
     (document) => document.status === "ready",
   ).length;
@@ -50,11 +52,11 @@ export default function App() {
           setConversationMenuOpen(false);
           setDrawerOpen(true);
         }}
-        onOpenReports={() => {
-          setConversationMenuOpen(false);
-          setReportsOpen(true);
-        }}
         documentCount={documents.documents.length}
+        onOpenWeeklyReport={() => {
+          setConversationMenuOpen(false);
+          setWeeklyReportOpen(true);
+        }}
         mobileOpen={conversationMenuOpen}
         onCloseMobile={() => setConversationMenuOpen(false)}
       />
@@ -97,8 +99,6 @@ export default function App() {
         onClose={() => chat.setMobileSourcesOpen(false)}
       />
 
-      <DailyReportDrawer open={reportsOpen} onClose={() => setReportsOpen(false)} />
-
       <DocumentDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
@@ -121,6 +121,26 @@ export default function App() {
         onRetry={documents.retryProcessing}
         onReextract={documents.restartExtraction}
         actionPending={documents.actionPending}
+      />
+
+      <WeeklyReportDrawer
+        open={weeklyReportOpen}
+        onClose={() => setWeeklyReportOpen(false)}
+        department={weeklyReport.department}
+        onDepartmentChange={weeklyReport.setDepartment}
+        text={weeklyReport.text}
+        onTextChange={weeklyReport.setText}
+        onSubmit={weeklyReport.submit}
+        submitting={weeklyReport.submitting}
+        loadingEntries={weeklyReport.loadingEntries}
+        currentPeriod={weeklyReport.currentPeriod}
+        nextPeriod={weeklyReport.nextPeriod}
+        currentWeekEntries={weeklyReport.currentWeekEntries}
+        nextWeekEntries={weeklyReport.nextWeekEntries}
+        onEditEntry={weeklyReport.editEntry}
+        onDeleteEntry={weeklyReport.removeEntry}
+        onUploadDocument={weeklyReport.uploadDocument}
+        uploading={weeklyReport.uploading}
       />
 
       {toast && (

@@ -129,6 +129,24 @@ function Get-MissingRagModelAssets {
     return $missing
 }
 
+function Start-RagFrontendIfNeeded {
+    param([int]$FrontendPort = 5173)
+
+    if (Test-RagPortOpen $FrontendPort) {
+        Write-Host "Frontend already running at http://127.0.0.1:$FrontendPort" -ForegroundColor Green
+        return
+    }
+    $frontendDir = Join-Path $script:RagProjectRoot "frontend"
+    if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules"))) {
+        Write-Host "Frontend dependencies not installed (frontend\node_modules missing) - skipping frontend startup. Run 'npm install' in frontend\ first." -ForegroundColor Yellow
+        return
+    }
+    Write-Host "Starting frontend (Vite) in a new window..." -ForegroundColor Green
+    Start-Process powershell.exe -ArgumentList @(
+        "-NoExit", "-Command", "Set-Location -LiteralPath `"$frontendDir`"; npm run dev"
+    ) | Out-Null
+}
+
 function Test-RagPortOpen {
     param([int]$Port)
     $client = New-Object System.Net.Sockets.TcpClient

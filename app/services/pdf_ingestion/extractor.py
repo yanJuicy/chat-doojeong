@@ -28,10 +28,18 @@ from ...core.extraction_quality import choose_better_extraction, evaluate_extrac
 from ...core.image_captioner import BaseImageCaptioner
 from ...core.image_markdown import wrap_image_block
 from ...core.pdf_page_classifier import choose_mixed_page_text, classify_pdf_page, rectangle_coverage_ratios
+from ...core.table_markdown import rows_to_markdown_table, wrap_table_block
 from ...core.table_region_detector import page_likely_has_table
 from ..table_extraction.engines.paddle_engine import PaddleTableEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _bbox_overlaps(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+    """두 사각형(x0, y0, x1, y1)이 겹치는지 확인한다."""
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1
 
 # 이보다 작은 이미지(로고, 아이콘, 장식용 구분선 등)는 의미 있는 그림/차트가 아닐 가능성이 높아 건너뛴다.
 _MIN_IMAGE_SIDE_PX = 100
@@ -83,7 +91,7 @@ class PdfExtractor(BaseDocumentExtractor):
                     diagnostic_extra: dict = {"classification": profile.to_dict()}
                     if profile.mode == "digital":
                         method = "digital_text"
-                        extracted_text = digital_text
+                        extracted_text = self._extract_digital_page_text(page, digital_text)
                         logger.info(
                             "페이지 %d: 디지털 텍스트 사용 (%d자, 이미지 점유율 %.1f%%)",
                             page_index + 1,
@@ -156,6 +164,47 @@ class PdfExtractor(BaseDocumentExtractor):
             self.last_extraction_method = "pdf_mixed"
 
         return "\n\n".join(t for t in page_texts if t.strip())
+
+    @staticmethod
+    def _extract_digital_page_text(page, fallback_text: str) -> str:  # noqa: ANN001
+        """
+        디지털 텍스트 페이지에서 표 격자를 감지해, 표는 TABLE_BLOCK으로 감싸 통째로
+        보존하고 나머지 본문은 원래 세로 순서대로 이어붙인다.
+
+        page.get_text()만 쓰면 표의 열 정보가 문자 스트림 순서에 묻혀 사라지고, 청킹
+        단계의 "표는 안 쪼갠다" 보호 로직도 TABLE_BLOCK 마커가 없어서 아예 적용되지
+        않는다 (표를 일반 본문처럼 취급해서 제목 감지 로직에 걸려 중간이 잘리기도 함).
+        find_tables()는 OCR/추측이 아니라 PDF에 그려진 선·좌표만으로 표 격자를 감지하므로
+        이 문제를 근본적으로 피할 수 있다.
+        """
+        if not settings.pdf_native_table_detection_enabled:
+            return fallback_text
+        try:
+            found = page.find_tables()
+        except Exception as exc:  # noqa: BLE001 — 표 감지 실패해도 기존 텍스트로 계속 진행
+            logger.warning("표 감지 실패, 일반 텍스트로 계속 진행: %s", exc)
+            return fallback_text
+        if not found.tables:
+            return fallback_text
+
+        table_bboxes = [tuple(table.bbox) for table in found.tables]
+        segments: list[tuple[float, str]] = []
+        for table, bbox in zip(found.tables, table_bboxes):
+            rows = [[(cell or "").replace("\n", " ").strip() for cell in row] for row in table.extract()]
+            markdown = rows_to_markdown_table(rows)
+            segments.append((bbox[1], wrap_table_block(markdown)))
+
+        for block in page.get_text("blocks"):
+            block_bbox = tuple(block[:4])
+            text = (block[4] or "").strip()
+            if not text:
+                continue
+            if any(_bbox_overlaps(block_bbox, table_bbox) for table_bbox in table_bboxes):
+                continue
+            segments.append((block_bbox[1], text))
+
+        segments.sort(key=lambda item: item[0])
+        return "\n\n".join(text for _, text in segments)
 
     @staticmethod
     def _measure_page_image_coverage(page) -> tuple[float, float]:  # noqa: ANN001
