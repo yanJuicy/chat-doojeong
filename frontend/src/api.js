@@ -290,6 +290,17 @@ export async function deleteWeeklyReportEntry(entryId) {
   return parseV1Response(response);
 }
 
+export function weeklyReportDocxUrl({ department, currentPeriod, nextPeriod }) {
+  const params = new URLSearchParams({
+    department,
+    current_period_start: currentPeriod.start,
+    current_period_end: currentPeriod.end,
+    next_period_start: nextPeriod.start,
+    next_period_end: nextPeriod.end,
+  });
+  return apiUrl(`/api/v1/work-reports/report.docx?${params.toString()}`);
+}
+
 export async function uploadWeeklyReportDocument(file) {
   const formData = new FormData();
   formData.append("file", file);

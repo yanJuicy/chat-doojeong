@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { weeklyReportDocxUrl } from "../../api";
 
 function formatPeriodLabel(period) {
   return `${period.start} ~ ${period.end}`;
@@ -188,6 +189,28 @@ export default function WeeklyReportDrawer({
                   ))}
                 </ul>
               </section>
+            </div>
+
+            <div className="weekly-report-generate">
+              <div>
+                <b>주간보고서 생성</b>
+                <span>지금까지 쌓인 항목으로 양식에 맞춘 DOCX를 바로 받습니다.</span>
+              </div>
+              <a
+                className={`weekly-report-generate-button${
+                  !department.trim() || (currentWeekEntries.length === 0 && nextWeekEntries.length === 0)
+                    ? " disabled"
+                    : ""
+                }`}
+                href={weeklyReportDocxUrl({ department, currentPeriod, nextPeriod })}
+                onClick={(event) => {
+                  if (!department.trim() || (currentWeekEntries.length === 0 && nextWeekEntries.length === 0)) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                주간보고서 생성(DOCX)
+              </a>
             </div>
           </div>
         </section>
