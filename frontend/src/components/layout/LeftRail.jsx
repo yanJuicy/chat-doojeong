@@ -1,5 +1,4 @@
 import ConversationList from "../conversations/ConversationList";
-
 export default function LeftRail({
   onNewChat,
   onDeleteChat,
@@ -10,6 +9,7 @@ export default function LeftRail({
   onRenameConversation,
   onDeleteConversation,
   onOpenDocuments,
+  onOpenMaterialReceipt,
   documentCount,
   mobileOpen = false,
   onCloseMobile,
@@ -46,6 +46,10 @@ export default function LeftRail({
           <span aria-hidden="true">▤</span>
           문서 관리
           <b>{documentCount}</b>
+        </button>
+        <button className="nav-item" type="button" onClick={onOpenMaterialReceipt}>
+          <span aria-hidden="true">📦</span>
+          자재입출고
         </button>
         <button
           className="nav-item delete-chat"
