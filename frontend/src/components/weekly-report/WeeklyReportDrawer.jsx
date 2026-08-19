@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import { weeklyReportDocxUrl } from "../../api";
 
 function formatPeriodLabel(period) {
-  return `${period.start} ~ ${period.end}`;
+  const range = `${period.start} ~ ${period.end}`;
+  return period.label ? `${period.label} (${range})` : range;
 }
 
 function EntryRow({ entry, onEdit, onDelete }) {

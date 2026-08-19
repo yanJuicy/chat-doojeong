@@ -9,12 +9,26 @@ work_report_entries에 쌓인 항목을 모아 타겟 양식(구분 1개: "사�
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 
 from ..db.models import WorkReportEntry
 from ..db.session import async_session_factory
+
+
+def week_of_month_label(monday: date) -> str:
+    """
+    "N월 M주차" 라벨을 계산한다. 실제 원본 문서 33주치에서 확인된 규칙: 그 주의
+    월요일이 속한 달 기준으로, 그 달의 몇 번째 월요일인지로 정해진다(예: "1월
+    4주차"(01.26~01.30) 다음이 "2월 1주차"(02.02~02.06) — 주의 끝(금요일)이 다음
+    달로 넘어가도 라벨은 월요일 기준). 사람이 직접 지정할 필요 없이 그 주의
+    월요일 날짜만 있으면 항상 정확히 계산된다.
+    """
+    first_of_month = monday.replace(day=1)
+    first_monday = first_of_month + timedelta(days=(7 - first_of_month.weekday()) % 7)
+    week_of_month = (monday - first_monday).days // 7 + 1
+    return f"{monday.month}월 {week_of_month}주차"
 
 
 @dataclass

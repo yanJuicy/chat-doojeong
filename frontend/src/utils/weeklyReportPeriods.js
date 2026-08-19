@@ -20,6 +20,27 @@ function addDays(date, days) {
   return next;
 }
 
+// "N월 M주차" 라벨을 계산한다. 실제 33주치 원본 문서에서 확인된 규칙: 그 주의 월요일이
+// 속한 달 기준으로, 그 달의 몇 번째 월요일인지로 정해진다(예: "1월 4주차"(01.26~01.30)
+// 다음이 "2월 1주차"(02.02~02.06) — 주의 끝(금요일)이 다음 달로 넘어가도 라벨은 월요일
+// 기준). 그래서 "이번 주가 몇 주차인지"를 사람이 직접 지정할 필요 없이, 그 주의 월요일
+// 날짜 하나만 있으면 계산으로 항상 정확히 구할 수 있다.
+export function getWeekOfMonthLabel(mondayDate) {
+  const year = mondayDate.getFullYear();
+  const month = mondayDate.getMonth();
+
+  const cursor = new Date(year, month, 1);
+  while (cursor.getDay() !== 1) cursor.setDate(cursor.getDate() + 1); // 그 달의 첫 월요일로 이동
+
+  let weekOfMonth = 0;
+  while (cursor <= mondayDate) {
+    weekOfMonth += 1;
+    cursor.setDate(cursor.getDate() + 7);
+  }
+
+  return `${month + 1}월 ${weekOfMonth}주차`;
+}
+
 // 실적 기간(이번 주 월~금)과 계획 기간(다음 주 월~금)을 오늘 날짜 기준으로 계산한다.
 export function getDefaultReportPeriods(today = new Date()) {
   const currentMonday = mondayOf(today);
@@ -28,7 +49,15 @@ export function getDefaultReportPeriods(today = new Date()) {
   const nextFriday = addDays(nextMonday, 4);
 
   return {
-    currentPeriod: { start: formatLocalDate(currentMonday), end: formatLocalDate(currentFriday) },
-    nextPeriod: { start: formatLocalDate(nextMonday), end: formatLocalDate(nextFriday) },
+    currentPeriod: {
+      start: formatLocalDate(currentMonday),
+      end: formatLocalDate(currentFriday),
+      label: getWeekOfMonthLabel(currentMonday),
+    },
+    nextPeriod: {
+      start: formatLocalDate(nextMonday),
+      end: formatLocalDate(nextFriday),
+      label: getWeekOfMonthLabel(nextMonday),
+    },
   };
 }

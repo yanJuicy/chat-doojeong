@@ -13,7 +13,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 
-from .weekly_report_composer import ReportPeriodBlock, WeeklyReportView
+from .weekly_report_composer import ReportPeriodBlock, WeeklyReportView, week_of_month_label
 
 
 def _set_run_font(run, *, size: float, bold: bool = False) -> None:
@@ -58,7 +58,8 @@ def render_weekly_report_docx(view: WeeklyReportView) -> bytes:
 
     title = document.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _set_run_font(title.add_run("주간 업무실적 및 계획"), size=18, bold=True)
+    week_label = week_of_month_label(view.current_week.period_start)
+    _set_run_font(title.add_run(f"주간 업무실적 및 계획 ({week_label})"), size=18, bold=True)
 
     dept_paragraph = document.add_paragraph()
     _set_run_font(dept_paragraph.add_run(f"■ 부서명 : {view.department}"), size=10.5, bold=True)
