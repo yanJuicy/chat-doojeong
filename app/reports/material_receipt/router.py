@@ -92,10 +92,15 @@ async def apply(order_file: UploadFile = File(...), xlsx_file: UploadFile = File
         wb.save(buf)
         buf.seek(0)
 
+        import urllib.parse
         out_name = xlsx_file.filename or "자재입출고_수정.xlsx"
+        ascii_fallback = "material_receipt_updated.xlsx"
+        encoded_name = urllib.parse.quote(out_name)
         headers = {
-            "Content-Disposition": f'attachment; filename="{out_name}"',
-            # 미매칭 품목이 있으면 프론트가 알림을 띄울 수 있도록 헤더로 같이 전달
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_fallback}"; '
+                f"filename*=UTF-8''{encoded_name}"
+            ),
             "X-Unmatched-Count": str(len(result.unmatched)),
         }
         return StreamingResponse(
