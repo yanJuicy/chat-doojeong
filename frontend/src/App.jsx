@@ -1,7 +1,6 @@
 import { useState } from "react";
 import ChatWorkspace from "./components/chat/ChatWorkspace";
 import DocumentDrawer from "./components/documents/DocumentDrawer";
-import DailyReportDrawer from "./components/reports/DailyReportDrawer";
 import LeftRail from "./components/layout/LeftRail";
 import MobileSourcePanel from "./components/sources/MobileSourcePanel";
 import SourceRail from "./components/sources/SourceRail";
@@ -12,7 +11,6 @@ import useToast from "./hooks/useToast";
 
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [reportsOpen, setReportsOpen] = useState(false);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
   const { toast, showToast } = useToast();
   const health = useServerHealth();
@@ -49,10 +47,6 @@ export default function App() {
         onOpenDocuments={() => {
           setConversationMenuOpen(false);
           setDrawerOpen(true);
-        }}
-        onOpenReports={() => {
-          setConversationMenuOpen(false);
-          setReportsOpen(true);
         }}
         documentCount={documents.documents.length}
         mobileOpen={conversationMenuOpen}
@@ -97,7 +91,6 @@ export default function App() {
         onClose={() => chat.setMobileSourcesOpen(false)}
       />
 
-      <DailyReportDrawer open={reportsOpen} onClose={() => setReportsOpen(false)} />
 
       <DocumentDrawer
         open={drawerOpen}

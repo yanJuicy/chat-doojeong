@@ -60,7 +60,6 @@ from .api_models import (
 )
 from .backend.documents import create_documents_router
 from .backend.router import create_backend_router
-from .reports.daily_report.router import create_daily_report_router
 from .config import settings
 from .core.bge_m3_provider import BgeM3EmbeddingProvider
 from .core.bge_reranker import BgeRerankerV2
@@ -1313,6 +1312,5 @@ async def health(request: Request) -> JSONResponse:
 
 # Evaluation remains API-only: the browser console intentionally has no evaluation panel.
 app.include_router(create_evaluation_router(_run_chat_pipeline))
-app.include_router(create_daily_report_router())
 app.include_router(create_backend_router(_run_chat_pipeline))
 app.include_router(create_documents_router(_run_workers_in_background, _UPLOAD_DIR))
