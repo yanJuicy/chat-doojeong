@@ -1198,22 +1198,26 @@ async def _run_chat_pipeline(
         yield ("progress", current_stage + " 중...")
         t0 = time.monotonic()
         # 6) 답과 질문 안전 메타데이터, 실제 근거 출처를 함께 보관한다.
-        question_cache.store(
-            question=body.question,
-            question_vector=query_dense,
-            answer=answer,
-            signature=query_signature,
-            source_document_ids={
-                str(result.metadata["document_id"])
-                for result in reranked
-                if result.metadata.get("document_id")
-            },
-            source_chunk_ids={str(result.chunk_id) for result in reranked if result.chunk_id},
-            n_context_chunks=len(reranked),
-            images=images,
-            sources=sources,
-            intent_scores=intent_scores,
-        )
+        # 근거 문서가 없는("모른다") 답은 캐시하지 않는다 — 이후 새 문서가 업로드돼도
+        # 이 캐시를 무효화할 방법이 없어(source_document_ids가 비어 있음), 답을 찾을 수
+        # 있게 된 뒤에도 의미상 비슷한 질문이 계속 "모른다"를 재사용하게 되기 때문.
+        if reranked:
+            question_cache.store(
+                question=body.question,
+                question_vector=query_dense,
+                answer=answer,
+                signature=query_signature,
+                source_document_ids={
+                    str(result.metadata["document_id"])
+                    for result in reranked
+                    if result.metadata.get("document_id")
+                },
+                source_chunk_ids={str(result.chunk_id) for result in reranked if result.chunk_id},
+                n_context_chunks=len(reranked),
+                images=images,
+                sources=sources,
+                intent_scores=intent_scores,
+            )
 
         async with async_session_factory() as session:
             session.add(

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 
 import httpx
@@ -13,6 +14,31 @@ from ..config import settings
 from .llm_provider import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
+
+_THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
+_THINK_CLOSE = "</think>"
+
+
+async def _strip_think_stream(tokens: AsyncIterator[str]) -> AsyncIterator[str]:
+    """모델 내부 사고 과정을 걸러내고 최종 답변만 내보낸다.
+
+    "think": false와 프롬프트 끝 "/no_think"를 모두 보내도 이 Ollama/qwen3 조합은
+    사고 과정을 그대로 내보내며, 심지어 여는 태그(<think>) 없이 닫는 태그(</think>)만
+    남기는 경우가 있어 태그 쌍 매칭이나 실시간 스트리밍 필터로는 걸러낼 수 없었다
+    (실측 확인됨). 그래서 토큰이 나오는 대로 바로 흘려보내지 않고 전체 응답을 모은
+    뒤 사고 과정으로 보이는 구간을 제거하고 한 번에 내보낸다 — 타이핑 효과는 없어지지만
+    화면에 영어 추론 원문이 새는 문제를 확실히 막는다.
+    """
+    parts = [token async for token in tokens]
+    full_text = "".join(parts)
+    cleaned = _THINK_BLOCK_PATTERN.sub("", full_text)
+    close_idx = cleaned.find(_THINK_CLOSE)
+    if close_idx != -1:
+        # 여는 태그 없이 닫는 태그만 남은 경우 — 그 앞부분도 전부 사고 과정이다.
+        cleaned = cleaned[close_idx + len(_THINK_CLOSE):]
+    cleaned = cleaned.strip()
+    if cleaned:
+        yield cleaned
 
 
 def _normalize_ollama_model_name(name: str) -> str:
@@ -45,9 +71,14 @@ class QwenOllamaProvider(BaseLLMProvider):
         self._model = settings.llm_model_name
 
     def _payload(self, prompt: str, system_prompt: str | None, stream: bool) -> dict:
+        # Ollama의 "think" 파라미터는 이 서버/모델 조합에서 무시되고, 그 결과 <think> 태그도 없이
+        # 영어 사고 과정이 답변에 그대로 섞여 나오는 문제가 있었다(관측 확인 완료).
+        # Qwen3는 프롬프트 끝의 "/no_think" 지시를 자체적으로 인식해 사고 과정을 생략하므로,
+        # think 옵션이 무시되는 환경에서도 이 방식은 안정적으로 동작한다.
+        effective_prompt = prompt if settings.llm_think else f"{prompt}\n\n/no_think"
         return {
             "model": self._model,
-            "prompt": prompt,
+            "prompt": effective_prompt,
             "system": system_prompt,
             "stream": stream,
             "think": settings.llm_think,
@@ -66,10 +97,17 @@ class QwenOllamaProvider(BaseLLMProvider):
             response = await client.post("/api/generate", json=self._payload(prompt, system_prompt, False))
             response.raise_for_status()
             data = response.json()
-            return str(data.get("response", "")).strip()
+            answer = str(data.get("response", ""))
+            return _THINK_BLOCK_PATTERN.sub("", answer).strip()
 
     async def generate_stream(self, prompt: str, system_prompt: str | None = None) -> AsyncIterator[str]:
-        """답변을 토큰 단위(NDJSON 라인 단위)로 스트리밍한다."""
+        """답변을 토큰 단위(NDJSON 라인 단위)로 스트리밍한다. <think> 구간은 걸러서 내보낸다."""
+        async for token in _strip_think_stream(self._raw_generate_stream(prompt, system_prompt)):
+            yield token
+
+    async def _raw_generate_stream(
+        self, prompt: str, system_prompt: str | None = None
+    ) -> AsyncIterator[str]:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=300.0) as client:
             async with client.stream(
                 "POST",

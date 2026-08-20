@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     adaptive_retrieval_fetch_pool: int = 64  # 리랭킹 24개를 보호·병합하기에 충분한 1차 후보 풀
     adaptive_retrieval_max: int = 24  # 전역 100개 중 보호·병합된 상위 후보만 교차인코더로 재평가
     adaptive_retrieval_max_cpu: int = 16  # 568M 교차인코더를 CPU에서 48개 돌리면 수분이 걸려 자동 축소
-    adaptive_retrieval_floor_similarity: float = 0.20  # 낮은 OCR 표현도 리랭커가 살릴 수 있게 보수적으로 완화
+    adaptive_retrieval_floor_similarity: float = 0.10  # 낮은 OCR 표현도 리랭커가 살릴 수 있게 보수적으로 완화
     retrieval_max_chunks_per_document: int = 3  # 한 문서가 최종 근거를 독점하지 않도록 제한
 
     # --- 검색 힌트 ---
