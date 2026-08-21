@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -94,6 +95,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 
 _UPLOAD_DIR = Path("./uploaded_files")
+
+# 답변 텍스트에 실제로 인용된 "[참고 N]" 번호를 뽑는다. context_blocks가 1부터 순서대로
+# [참고 1], [참고 2] ...로 reranked와 1:1 대응하므로, 이 번호로 reranked[N-1]을 찾을 수 있다.
+_CITED_REFERENCE_PATTERN = re.compile(r"\[참고\s*(\d+)\]")
 
 
 @asynccontextmanager
@@ -1236,11 +1241,17 @@ async def _run_chat_pipeline(
         # "확인할 수 없습니다"라고 답하면서 사진은 뜨는 모순을 막는다.
         is_grounded_answer = "확인할 수 없습니다" not in answer
 
+        # 랭킹에 오른 후보 전부가 아니라, 답변이 실제로 "[참고 N]"으로 인용한 청크의
+        # 이미지만 보여준다 — 안 그러면 리랭킹 상위 5개 중 답변에 안 쓰인 후보의 무관한
+        # 이미지까지 같이 뜬다(실측으로 확인된 문제).
+        cited_indices = {
+            int(match) for match in _CITED_REFERENCE_PATTERN.findall(answer)
+        }
         images = (
             [
                 ChatImage(image_url=f"/images/{r.metadata['image_path']}", caption=r.text, chunk_id=r.chunk_id)
-                for r in reranked
-                if r.metadata.get("image_path")
+                for index, r in enumerate(reranked, start=1)
+                if index in cited_indices and r.metadata.get("image_path")
             ]
             if is_grounded_answer
             else []
