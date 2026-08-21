@@ -121,50 +121,7 @@ export default function App() {
         onReextract={documents.restartExtraction}
         actionPending={documents.actionPending}
       />
-      {materialReceiptOpen && (
-  <div
-    style={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 9999,
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: "rgba(0,0,0,0.4)",
-    }}
-    onClick={() => setMaterialReceiptOpen(false)}
-  >
-    <div
-      style={{
-        backgroundColor: "white",
-        borderRadius: "8px",
-        boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
-        maxWidth: "560px",
-        width: "90%",
-        maxHeight: "90vh",
-        overflowY: "auto",
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div style={{ display: "flex", justifyContent: "flex-end", padding: "8px" }}>
-        <button
-          onClick={() => setMaterialReceiptOpen(false)}
-          style={{
-            background: "none",
-            border: "none",
-            fontSize: "20px",
-            cursor: "pointer",
-            padding: "4px 8px",
-            color: "#666",
-          }}
-        >
-          ×
-        </button>
-      </div>
-      <MaterialReceiptPanel />
-    </div>
-  </div>
-)}
+      <MaterialReceiptPanel open={materialReceiptOpen} onClose={() => setMaterialReceiptOpen(false)} />
 
       {toast && (
         <div className="toast" role="status">
