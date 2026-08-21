@@ -74,7 +74,16 @@ from .core.retrieval_pipeline import rerank_candidates, retrieve_candidates
 from .core.answer_prompt import build_grounded_answer_prompt, build_grounded_system_prompt
 from .core.structured_chunker import StructuredChunker
 from .core.similarity_utils import cosine_similarity
-from .db.models import ChatLog, Document, DocumentChunk, DocumentLabel, DocumentStatus
+from .core.work_report_indexing import deindex_entry
+from .db.models import (
+    ChatLog,
+    Document,
+    DocumentChunk,
+    DocumentLabel,
+    DocumentStatus,
+    WorkReportDocument,
+    WorkReportEntry,
+)
 from .db.session import async_session_factory
 from .report_api import create_shipment_report_router
 from .routers.evaluation import create_evaluation_router
@@ -752,9 +761,24 @@ async def list_documents_needing_review() -> list[dict]:
 
 @app.get("/api/documents")
 async def list_documents() -> list[dict]:
-    """업로드된 문서 전체 목록을 조회한다 (콘솔 UI에서 문서 선택용, 새로고침해도 이력이 남도록)."""
+    """업로드된 문서 전체 목록을 조회한다 (콘솔 UI에서 문서 선택용, 새로고침해도 이력이 남도록).
+
+    주간보고서 항목을 검색에 연결하려고 항목 하나당 만든 내부용 Document(라벨
+    "주간보고서"로 표시됨, work_report_indexing.py 참고)는 여기서 제외한다 —
+    실제 업로드한 파일이 아니라 검색용 조각이라 그대로 노출하면 목록이 항목 개수만큼
+    불어난다. 대신 주간보고서로 업로드된 원본 PDF(work_report_documents)를 같은
+    모양으로 변환해서 끼워 넣는다 — 사용자 입장에선 "내가 업로드한 파일"이 하나로
+    보이는 게 자연스럽다.
+    """
     async with async_session_factory() as session:
-        result = await session.execute(select(Document).order_by(Document.created_at.desc()))
+        work_report_marker_ids = (
+            select(DocumentLabel.document_id).where(DocumentLabel.label == "주간보고서")
+        ).scalar_subquery()
+        result = await session.execute(
+            select(Document)
+            .where(Document.id.notin_(work_report_marker_ids))
+            .order_by(Document.created_at.desc())
+        )
         docs = result.scalars().all()
 
         labels_result = await session.execute(select(DocumentLabel.document_id, DocumentLabel.label))
@@ -762,7 +786,12 @@ async def list_documents() -> list[dict]:
         for document_id, label in labels_result.all():
             labels_by_doc.setdefault(document_id, []).append(label)
 
-        return [
+        work_report_docs_result = await session.execute(
+            select(WorkReportDocument).order_by(WorkReportDocument.uploaded_at.desc())
+        )
+        work_report_docs = work_report_docs_result.scalars().all()
+
+        combined = [
             {
                 "document_id": d.id,
                 "filename": d.filename,
@@ -780,7 +809,31 @@ async def list_documents() -> list[dict]:
                 "labels": labels_by_doc.get(d.id, []),
             }
             for d in docs
+        ] + [
+            {
+                "document_id": w.id,
+                "filename": w.filename,
+                "status": "ready",
+                "current_page": None,
+                "total_pages": w.pages_with_table + w.pages_without_table,
+                "retry_count": 0,
+                "error_message": None,
+                "warning_message": (
+                    f"{w.pages_without_table}개 페이지에서 표를 인식하지 못함"
+                    if w.pages_without_table
+                    else None
+                ),
+                "extraction_quality_score": None,
+                "extraction_method": "work_report_table_parser",
+                "created_at": w.uploaded_at,
+                "updated_at": w.uploaded_at,
+                "indexed_at": w.uploaded_at,
+                "labels": ["주간보고서"] + ([w.department] if w.department else []),
+            }
+            for w in work_report_docs
         ]
+        combined.sort(key=lambda item: item["created_at"], reverse=True)
+        return combined
 
 
 _DELETE_BLOCKED_STATUSES = {
@@ -819,6 +872,31 @@ async def _delete_documents(
         )
         documents = {document.id: document for document in result.scalars().all()}
         response.missing = [document_id for document_id in unique_ids if document_id not in documents]
+
+        # documents 테이블엔 없지만(주간보고서 업로드 원본은 별도 테이블이라 여기 안 잡힘)
+        # work_report_documents에 있는 id는 여기서 같이 처리하고 missing에서 뺀다.
+        if response.missing:
+            wrd_result = await session.execute(
+                select(WorkReportDocument).where(WorkReportDocument.id.in_(response.missing))
+            )
+            work_report_docs = {w.id: w for w in wrd_result.scalars().all()}
+            if work_report_docs:
+                response.missing = [
+                    document_id for document_id in response.missing if document_id not in work_report_docs
+                ]
+                for wrd in work_report_docs.values():
+                    entry_result = await session.execute(
+                        select(WorkReportEntry.id).where(WorkReportEntry.source_document_id == wrd.id)
+                    )
+                    entry_ids = [row[0] for row in entry_result.all()]
+                    for entry_id in entry_ids:
+                        await deindex_entry(session, request.app.state.vector_store, entry_id)
+                    if entry_ids:
+                        await session.execute(delete(WorkReportEntry).where(WorkReportEntry.id.in_(entry_ids)))
+                    await session.execute(delete(WorkReportDocument).where(WorkReportDocument.id == wrd.id))
+                    await session.commit()
+                    _unlink_managed_file(Path(wrd.file_path), _UPLOAD_DIR.resolve(), response.cleanup_warnings)
+                    response.deleted.append(wrd.id)
 
         deletable: list[Document] = []
         for document_id in unique_ids:

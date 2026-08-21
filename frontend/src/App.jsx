@@ -19,7 +19,9 @@ export default function App() {
   const health = useServerHealth();
   const chat = useChat();
   const documents = useDocuments(showToast);
-  const weeklyReport = useWeeklyReport(showToast);
+  const weeklyReport = useWeeklyReport(showToast, () =>
+    documents.loadDocuments({ quiet: true }),
+  );
   const readyDocumentCount = documents.documents.filter(
     (document) => document.status === "ready",
   ).length;

@@ -10,7 +10,10 @@ import { getDefaultReportPeriods } from "../utils/weeklyReportPeriods";
 
 const DEPARTMENT_STORAGE_KEY = "weeklyReportDepartment";
 
-export default function useWeeklyReport(showToast) {
+// onDocumentsChanged: 문서관리 탭(useDocuments)의 목록도 같이 갱신하기 위한 콜백.
+// 두 훅이 완전히 분리돼 있어서, 여기서 새 문서를 등록해도 문서관리 쪽 상태는 저절로
+// 안 바뀐다 — 업로드가 성공했을 때만 이 콜백으로 알려준다(조용히, 로딩 스피너 없이).
+export default function useWeeklyReport(showToast, onDocumentsChanged) {
   const [department, setDepartment] = useState(
     () => window.localStorage.getItem(DEPARTMENT_STORAGE_KEY) ?? "",
   );
@@ -119,13 +122,15 @@ export default function useWeeklyReport(showToast) {
         } else {
           await loadEntries();
         }
+        // 업로드한 원본 PDF가 문서관리 탭에도 바로 보이도록 그쪽 목록도 갱신한다.
+        onDocumentsChanged?.();
       } catch (error) {
         showToast?.(error.message ?? "업로드에 실패했습니다.");
       } finally {
         setUploading(false);
       }
     },
-    [department, loadEntries, showToast, updateDepartment],
+    [department, loadEntries, onDocumentsChanged, showToast, updateDepartment],
   );
 
   const currentWeekEntries = entries.filter(

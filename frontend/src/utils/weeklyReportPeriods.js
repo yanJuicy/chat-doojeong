@@ -41,22 +41,24 @@ export function getWeekOfMonthLabel(mondayDate) {
   return `${month + 1}월 ${weekOfMonth}주차`;
 }
 
-// 실적 기간(이번 주 월~금)과 계획 기간(다음 주 월~금)을 오늘 날짜 기준으로 계산한다.
+// 실적 기간(이번 주 월~일)과 계획 기간(다음 주 월~일)을 오늘 날짜 기준으로 계산한다.
+// 월~금(업무일)만이 아니라 항상 7일 간격의 달력 주 전체를 기간으로 잡는다 — 업무일만
+// 잡으면 실제 데이터가 걸쳐 있는 날짜 범위에 따라 기간이 들쭉날쭉해 보이는 문제가 있었다.
 export function getDefaultReportPeriods(today = new Date()) {
   const currentMonday = mondayOf(today);
-  const currentFriday = addDays(currentMonday, 4);
+  const currentSunday = addDays(currentMonday, 6);
   const nextMonday = addDays(currentMonday, 7);
-  const nextFriday = addDays(nextMonday, 4);
+  const nextSunday = addDays(nextMonday, 6);
 
   return {
     currentPeriod: {
       start: formatLocalDate(currentMonday),
-      end: formatLocalDate(currentFriday),
+      end: formatLocalDate(currentSunday),
       label: getWeekOfMonthLabel(currentMonday),
     },
     nextPeriod: {
       start: formatLocalDate(nextMonday),
-      end: formatLocalDate(nextFriday),
+      end: formatLocalDate(nextSunday),
       label: getWeekOfMonthLabel(nextMonday),
     },
   };
