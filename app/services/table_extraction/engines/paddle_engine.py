@@ -224,18 +224,34 @@ class PaddleTableEngine(BaseTableEngine):
         return "\n".join(output_lines)
 
     @staticmethod
-    def _parse_markdown_table(md_table: str) -> tuple[list[TableCell], int, int]:
-        """Markdown 표 문자열을 셀 리스트로 파싱한다 (병합 셀은 지원하지 않는 간이 파서)."""
+    def _markdown_table_to_grid(md_table: str) -> list[list[str]]:
+        """Markdown 표 문자열을 행/열 문자열 그리드로 변환한다 (병합 셀은 지원하지 않는 간이 파서)."""
         rows = [line for line in md_table.split("\n") if line.strip()]
         # 구분선(|---|---|) 행은 셀 데이터가 아니므로 제외한다.
         data_rows = [r for r in rows if not re.match(r"^\s*\|[\s:|-]+\|\s*$", r)]
+        return [[c.strip() for c in row.strip().strip("|").split("|")] for row in data_rows]
 
+    @staticmethod
+    def _parse_markdown_table(md_table: str) -> tuple[list[TableCell], int, int]:
+        """Markdown 표 문자열을 셀 리스트로 파싱한다 (병합 셀은 지원하지 않는 간이 파서)."""
+        grid = PaddleTableEngine._markdown_table_to_grid(md_table)
         cells: list[TableCell] = []
         max_col = 0
-        for row_idx, row in enumerate(data_rows):
-            col_values = [c.strip() for c in row.strip().strip("|").split("|")]
+        for row_idx, col_values in enumerate(grid):
             for col_idx, text in enumerate(col_values):
                 cells.append(TableCell(row=row_idx, col=col_idx, text=text))
             max_col = max(max_col, len(col_values))
 
-        return cells, len(data_rows), max_col
+        return cells, len(grid), max_col
+
+    def extract_tables_as_grids(self, image: Image.Image) -> tuple[list[list[list[str]]], str]:
+        """
+        스캔본 페이지를 PPStructureV3로 분석해서, 감지된 표들을 report_table_parser가
+        바로 쓸 수 있는 행/열 그리드(find_tables().extract()와 같은 모양)로, 나머지
+        페이지 텍스트(부서명 등)는 원문 그대로 함께 반환한다. OCR을 한 번만 돌려서
+        표 구조와 주변 텍스트를 동시에 얻는다.
+        """
+        markdown_text = self._run_and_get_markdown(image)
+        table_blocks = self._extract_markdown_table_blocks(markdown_text)
+        grids = [self._markdown_table_to_grid(block) for block in table_blocks]
+        return grids, markdown_text

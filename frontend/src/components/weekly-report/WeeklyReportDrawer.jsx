@@ -55,6 +55,7 @@ export default function WeeklyReportDrawer({
   open,
   onClose,
   department,
+  departments,
   onDepartmentChange,
   text,
   onTextChange,
@@ -106,7 +107,16 @@ export default function WeeklyReportDrawer({
                 value={department}
                 onChange={(event) => onDepartmentChange(event.target.value)}
                 placeholder="예: 시군 특화 일자리 사업단"
+                list="weekly-report-department-options"
+                autoComplete="off"
               />
+              {/* 기존 부서명은 스크롤 가능한 드롭다운으로 뜨고 타이핑하면 자동으로 좁혀진다.
+                  목록에 없는 새 부서명도 그대로 자유롭게 입력할 수 있다(강제 선택 아님). */}
+              <datalist id="weekly-report-department-options">
+                {(departments ?? []).map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
             </label>
 
             <form

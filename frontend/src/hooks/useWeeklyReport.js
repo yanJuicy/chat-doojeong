@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   deleteWeeklyReportEntry,
+  getWeeklyReportDepartments,
   getWeeklyReportEntries,
   submitWeeklyReportChat,
   updateWeeklyReportEntry,
@@ -22,6 +23,23 @@ export default function useWeeklyReport(showToast, onDocumentsChanged) {
   const [entries, setEntries] = useState([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [departments, setDepartments] = useState([]);
+
+  // 부서명 입력창 자동완성/드롭다운용 — 지금까지 한 번이라도 쓰인 부서명 목록.
+  // 드로어를 열 때마다 새로 부를 필요는 없어서 마운트 시 한 번만 불러온다.
+  useEffect(() => {
+    let cancelled = false;
+    getWeeklyReportDepartments()
+      .then((data) => {
+        if (!cancelled) setDepartments(data.departments ?? []);
+      })
+      .catch(() => {
+        // 목록을 못 불러와도 부서명은 여전히 직접 입력할 수 있으니 조용히 무시한다.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const { currentPeriod, nextPeriod } = getDefaultReportPeriods();
 
@@ -143,6 +161,7 @@ export default function useWeeklyReport(showToast, onDocumentsChanged) {
   return {
     department,
     setDepartment: updateDepartment,
+    departments,
     text,
     setText,
     submitting,

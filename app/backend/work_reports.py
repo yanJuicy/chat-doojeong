@@ -307,6 +307,16 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
             },
         )
 
+    @router.get("/departments")
+    async def list_departments() -> JSONResponse:
+        """지금까지 한 번이라도 쓰인 부서명 목록(중복 제거, 가나다순) — 프론트에서 자동완성/드롭다운으로 씀."""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(WorkReportEntry.department).distinct().order_by(WorkReportEntry.department)
+            )
+            departments = [row[0] for row in result.all() if row[0]]
+        return JSONResponse(status_code=200, content={"success": True, "data": {"departments": departments}})
+
     @router.get("")
     async def list_entries(
         start: date | None = None,

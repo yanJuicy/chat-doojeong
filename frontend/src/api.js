@@ -257,6 +257,11 @@ export async function submitWeeklyReportChat({ department, text, currentPeriod, 
   return parseV1Response(response);
 }
 
+export async function getWeeklyReportDepartments(signal) {
+  const response = await fetch(apiUrl("/api/v1/work-reports/departments"), { signal });
+  return parseV1Response(response);
+}
+
 export async function getWeeklyReportEntries({ start, end, department } = {}, signal) {
   const params = new URLSearchParams();
   if (start) params.set("start", start);

@@ -129,6 +129,7 @@ export default function App() {
         open={weeklyReportOpen}
         onClose={() => setWeeklyReportOpen(false)}
         department={weeklyReport.department}
+        departments={weeklyReport.departments}
         onDepartmentChange={weeklyReport.setDepartment}
         text={weeklyReport.text}
         onTextChange={weeklyReport.setText}
