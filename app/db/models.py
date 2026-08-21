@@ -207,3 +207,23 @@ class WorkReportEntry(Base):
     raw_input: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkReportDocument(Base):
+    """
+    주간보고서 작성용으로 업로드된 원본 PDF 파일 1개. work_report_entries.source_document_id가
+    가리키는 대상 — 파일은 처음부터 디스크에 저장돼 있었지만(work_reports.py의 upload_document),
+    그 경로를 조회/재다운로드할 DB 행이 없어서 추가했다. 일반 문서(documents 테이블)와는
+    별개로 둔다 — 목적이 검색이 아니라 표 데이터 추출이라 OCR/청킹/임베딩 파이프라인을 타지 않는다.
+    """
+
+    __tablename__ = "work_report_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    department: Mapped[str | None] = mapped_column(String, nullable=True)
+    pages_with_table: Mapped[int] = mapped_column(default=0)
+    pages_without_table: Mapped[int] = mapped_column(default=0)
+    entries_created: Mapped[int] = mapped_column(default=0)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

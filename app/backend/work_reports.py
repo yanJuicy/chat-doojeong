@@ -2,10 +2,14 @@
 주간 업무보고 원자료 API.
 
 POST /api/v1/work-reports/upload-document
-  기존 주간보고서 문서(PDF)를 업로드하면, 페이지마다 find_tables()로 표를 감지해서
+  기존 주간보고서 문서(PDF)를 업로드하면, 페이지마다 표를 감지해서
   report_table_parser.parse_report_table()로 구조화한 뒤 work_report_entries에 저장한다.
   이 경로는 일반 RAG 문서 업로드(/api/v1/upload)와 별개다 — 검색용 청킹/임베딩이
   아니라, 표 자체를 구조화된 레코드로 뽑아내는 게 목적이라 워커 파이프라인을 안 태운다.
+  텍스트 레이어가 있는 디지털 페이지는 find_tables()(좌표 기반, OCR 불필요)로,
+  텍스트가 없는 스캔 페이지는 PPStructureV3 OCR로 표를 인식해 같은 그리드 형태로
+  변환한다 — 원본이 스캔한 사진이어도 동작하게 하려는 목적. 단, 두 경로 모두 병합
+  셀은 지원하지 않는 간이 파서라, 병합 셀이 있는 표는 구분이 어긋날 수 있다.
 
 GET /api/v1/work-reports
   기간(start~end)/부서로 저장된 항목을 조회한다. 보고서를 뽑기 전에 "지금까지 뭐가
@@ -31,6 +35,7 @@ DELETE /api/v1/work-reports/{entry_id}
 """
 from __future__ import annotations
 
+import io
 import uuid
 from datetime import date
 from pathlib import Path
@@ -39,15 +44,27 @@ from urllib.parse import quote
 import fitz  # PyMuPDF
 from fastapi import APIRouter, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
+from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete, select
 
+from ..config import settings
 from ..core.report_chat_refiner import refine_chat_input
 from ..core.report_table_parser import parse_report_table
 from ..core.weekly_report_composer import compose_weekly_report
 from ..core.weekly_report_docx_renderer import render_weekly_report_docx
-from ..db.models import WorkReportEntry
+from ..core.work_report_indexing import deindex_entry, index_entry
+from ..db.models import WorkReportDocument, WorkReportEntry
 from ..db.session import async_session_factory
+from ..services.table_extraction.engines.paddle_engine import PaddleTableEngine
+
+
+def _render_page_to_image(page, dpi: int) -> Image.Image:  # noqa: ANN001 — fitz.Page는 외부 라이브러리 타입
+    """스캔 페이지를 OCR용 이미지로 렌더링한다 (PdfExtractor._render_page_to_image와 동일 로직)."""
+    zoom = dpi / 72
+    matrix = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=matrix)
+    return Image.open(io.BytesIO(pix.tobytes("png")))
 
 
 class ChatEntryRequest(BaseModel):
@@ -67,7 +84,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
     router = APIRouter(prefix="/api/v1/work-reports", tags=["work-reports"])
 
     @router.post("/upload-document")
-    async def upload_document(file: UploadFile) -> JSONResponse:
+    async def upload_document(request: Request, file: UploadFile) -> JSONResponse:
         safe_filename = Path(file.filename or "report.pdf").name
         if Path(safe_filename).suffix.lower() != ".pdf":
             return JSONResponse(
@@ -100,20 +117,40 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
         entries_to_save: list[WorkReportEntry] = []
         pages_with_table = 0
         pages_without_table: list[int] = []
+        pages_via_ocr: list[int] = []
+        paddle_engine: PaddleTableEngine | None = None
 
         try:
             for page_index in range(len(pdf)):
                 page = pdf[page_index]
-                page_text = page.get_text()
-                found = page.find_tables()
-                if not found.tables:
+                digital_text = page.get_text()
+
+                # (rows 그리드, 주변 텍스트) 쌍의 목록 — 디지털/OCR 어느 경로든 같은 모양으로 맞춘다.
+                grids_with_context: list[tuple[list[list[str]], str]] = []
+
+                if digital_text.strip():
+                    # 텍스트 레이어가 있는 디지털 페이지: find_tables()로 좌표 기반 감지 (OCR 불필요)
+                    found = page.find_tables()
+                    for table in found.tables:
+                        grids_with_context.append((table.extract(), digital_text))
+                else:
+                    # 텍스트 레이어가 없는 스캔 페이지: PPStructureV3 OCR로 표를 인식한다.
+                    if paddle_engine is None:
+                        paddle_engine = PaddleTableEngine()
+                    image = _render_page_to_image(page, settings.scan_render_dpi)
+                    grids, ocr_text = paddle_engine.extract_tables_as_grids(image)
+                    for grid in grids:
+                        grids_with_context.append((grid, ocr_text))
+                    if grids:
+                        pages_via_ocr.append(page_index + 1)
+
+                if not grids_with_context:
                     pages_without_table.append(page_index + 1)
                     continue
 
                 pages_with_table += 1
-                for table in found.tables:
-                    rows = table.extract()
-                    for parsed in parse_report_table(rows, page_text):
+                for rows, context_text in grids_with_context:
+                    for parsed in parse_report_table(rows, context_text):
                         entries_to_save.append(
                             WorkReportEntry(
                                 id=str(uuid.uuid4()),
@@ -131,8 +168,24 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
             pdf.close()
 
         async with async_session_factory() as session:
+            session.add(
+                WorkReportDocument(
+                    id=document_id,
+                    filename=safe_filename,
+                    file_path=str(saved_path),
+                    department=entries_to_save[0].department if entries_to_save else None,
+                    pages_with_table=pages_with_table,
+                    pages_without_table=len(pages_without_table),
+                    entries_created=len(entries_to_save),
+                )
+            )
             session.add_all(entries_to_save)
             await session.commit()
+
+            embedding_provider = request.app.state.embedding_provider
+            vector_store = request.app.state.vector_store
+            for entry in entries_to_save:
+                await index_entry(session, embedding_provider, vector_store, entry)
 
         return JSONResponse(
             status_code=200,
@@ -145,6 +198,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
                     "pages_total": pages_with_table + len(pages_without_table),
                     "pages_with_table": pages_with_table,
                     "pages_without_table": pages_without_table,
+                    "pages_via_ocr": pages_via_ocr,
                     "entries_created": len(entries_to_save),
                 },
             },
@@ -173,6 +227,11 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
         async with async_session_factory() as session:
             session.add_all(entries_to_save)
             await session.commit()
+
+            embedding_provider = request.app.state.embedding_provider
+            vector_store = request.app.state.vector_store
+            for entry in entries_to_save:
+                await index_entry(session, embedding_provider, vector_store, entry)
 
         return JSONResponse(
             status_code=200,
@@ -288,7 +347,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
         )
 
     @router.patch("/{entry_id}")
-    async def update_entry(entry_id: str, body: UpdateEntryRequest) -> JSONResponse:
+    async def update_entry(request: Request, entry_id: str, body: UpdateEntryRequest) -> JSONResponse:
         content = body.content.strip()
         if not content:
             return JSONResponse(
@@ -312,13 +371,18 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
             entry.content = content
             await session.commit()
 
+            # 검색 인덱스도 최신 내용으로 다시 맞춘다 — 안 하면 검색 결과가 수정 전 문구로 남는다.
+            embedding_provider = request.app.state.embedding_provider
+            vector_store = request.app.state.vector_store
+            await index_entry(session, embedding_provider, vector_store, entry)
+
         return JSONResponse(
             status_code=200,
             content={"success": True, "data": {"id": entry_id, "content": content}},
         )
 
     @router.delete("/{entry_id}")
-    async def delete_entry(entry_id: str) -> JSONResponse:
+    async def delete_entry(request: Request, entry_id: str) -> JSONResponse:
         async with async_session_factory() as session:
             entry = await session.get(WorkReportEntry, entry_id)
             if entry is None:
@@ -331,6 +395,9 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
                 )
             await session.execute(sa_delete(WorkReportEntry).where(WorkReportEntry.id == entry_id))
             await session.commit()
+
+            vector_store = request.app.state.vector_store
+            await deindex_entry(session, vector_store, entry_id)
 
         return JSONResponse(status_code=200, content={"success": True, "data": {"id": entry_id}})
 
