@@ -942,6 +942,13 @@ async def _delete_documents(
             await session.commit()
             response.deleted = deletable_ids
 
+    # 삭제된 문서를 근거로 캐시된 답이 그대로 남아있으면, 파일을 지워도 옛 답(과 그때
+    # 출처로 쓰인 이미지)이 계속 재사용된다 — 라벨 수정/재추출 때와 동일하게 무효화한다.
+    for document_id in response.deleted:
+        invalidated = request.app.state.question_cache.invalidate_document(document_id)
+        if invalidated:
+            logger.info("문서 삭제로 질문 캐시 %d건 무효화: document_id=%s", invalidated, document_id)
+
     upload_root = _UPLOAD_DIR.resolve()
     image_root = Path(settings.image_storage_dir).resolve()
     for source_path in source_paths:
