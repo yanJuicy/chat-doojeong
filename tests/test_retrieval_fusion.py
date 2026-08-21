@@ -5,6 +5,7 @@ import unittest
 from app.core.retrieval_fusion import (
     apply_relevance_floor_with_safe_rescue,
     reciprocal_rank_fuse,
+    rescue_by_relative_margin,
     rescue_broad_lexical_candidates,
 )
 from app.core.vector_store import SearchResult
@@ -216,6 +217,62 @@ class RetrievalFusionTests(unittest.TestCase):
         )
 
         self.assertEqual([candidate.chunk_id for candidate in rescued], ["speed"])
+
+
+    def test_relative_margin_rescues_lone_candidate_above_low_floor(self) -> None:
+        candidate = _result("only", "마이크는 매주 월요일 점검", 0.066, document_id="manual")
+
+        rescued = rescue_by_relative_margin([candidate], low_floor=0.002, margin=4.0)
+
+        self.assertEqual([item.chunk_id for item in rescued], ["only"])
+
+    def test_relative_margin_rescues_when_far_ahead_of_other_document(self) -> None:
+        top = _result("answer", "정답 청크", 0.0041, document_id="manual")
+        other = _result("noise", "무관한 청크", 0.0004, document_id="other-doc")
+
+        rescued = rescue_by_relative_margin([other, top], low_floor=0.002, margin=4.0)
+
+        self.assertEqual([item.chunk_id for item in rescued], ["answer"])
+
+    def test_relative_margin_rejects_when_below_low_floor(self) -> None:
+        top = _result("weak", "약한 후보", 0.0015, document_id="manual")
+        other = _result("noise", "무관한 청크", 0.0001, document_id="other-doc")
+
+        rescued = rescue_by_relative_margin([other, top], low_floor=0.002, margin=4.0)
+
+        self.assertEqual(rescued, [])
+
+    def test_relative_margin_rejects_when_competitor_too_close(self) -> None:
+        top = _result("ambiguous-a", "후보 A", 0.02, document_id="doc-a")
+        other = _result("ambiguous-b", "후보 B", 0.01, document_id="doc-b")
+
+        rescued = rescue_by_relative_margin([other, top], low_floor=0.002, margin=4.0)
+
+        self.assertEqual(rescued, [])
+
+    def test_relative_margin_disabled_by_default_returns_nothing(self) -> None:
+        candidate = _result("only", "마이크는 매주 월요일 점검", 0.066, document_id="manual")
+
+        rescued = rescue_by_relative_margin([candidate], low_floor=0.0, margin=0.0)
+
+        self.assertEqual(rescued, [])
+
+    def test_apply_floor_uses_relative_margin_before_lexical_rescue(self) -> None:
+        top = _result("answer", "매주 월요일 오전 마이크 점검", 0.066, document_id="manual")
+        other = _result("noise", "무관한 로봇 사양", 0.0134, document_id="other-doc")
+
+        selected, rescued = apply_relevance_floor_with_safe_rescue(
+            "비품들의 점검 주기를 알려줘",
+            [other, top],
+            [other, top],
+            floor=0.10,
+            top_k=5,
+            relative_margin_low_floor=0.002,
+            relative_margin=4.0,
+        )
+
+        self.assertTrue(rescued)
+        self.assertEqual([item.chunk_id for item in selected], ["answer"])
 
 
 if __name__ == "__main__":

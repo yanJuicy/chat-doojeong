@@ -71,7 +71,7 @@ from .core.label_matching import expand_search_query
 from .core.qdrant_store import QdrantVectorStore
 from .core.qwen_ollama_provider import QwenOllamaProvider, build_cross_lingual_system_prompt
 from .core.question_cache import SemanticQuestionCache, build_query_signature
-from .core.retrieval_pipeline import rerank_candidates, retrieve_candidates
+from .core.retrieval_pipeline import rerank_candidates, retrieve_candidates, score_candidates
 from .core.answer_prompt import build_grounded_answer_prompt, build_grounded_system_prompt
 from .core.structured_chunker import StructuredChunker
 from .core.similarity_utils import cosine_similarity
@@ -1393,6 +1393,10 @@ async def debug_retrieve(request: Request, body: ChatRequest) -> dict:
         reranker,
         explicit_labels=list(query_signature.labels),
     )
+    # 하한선 적용 전 원점수(score_candidates)와, 실제 답변에 쓰이는 최종 결과(rerank_candidates)를
+    # 둘 다 계산한다 — 하한선 근처에서 얼마나 많이 걸러지는지 분석할 때 서버를 매번
+    # 재시작해서 임시 로그를 넣을 필요 없이 이 엔드포인트 하나로 확인할 수 있게 하기 위함.
+    pre_floor = await score_candidates(body.question, candidate_batch, reranker)
     reranked = await rerank_candidates(body.question, candidate_batch, reranker)
 
     return {
@@ -1409,6 +1413,17 @@ async def debug_retrieve(request: Request, body: ChatRequest) -> dict:
             }
             for index, result in enumerate(reranked)
         ],
+        "pre_floor_top5": [
+            {
+                "rank": index + 1,
+                "score": round(result.score, 4),
+                "filename": result.metadata.get("filename"),
+                "page": result.metadata.get("page_number"),
+                "passes_current_floor": result.score >= settings.adaptive_retrieval_floor_similarity,
+            }
+            for index, result in enumerate(pre_floor[:5])
+        ],
+        "floor": settings.adaptive_retrieval_floor_similarity,
     }
 
 

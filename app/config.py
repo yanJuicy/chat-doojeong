@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     adaptive_retrieval_max: int = 24  # 전역 100개 중 보호·병합된 상위 후보만 교차인코더로 재평가
     adaptive_retrieval_max_cpu: int = 16  # 568M 교차인코더를 CPU에서 48개 돌리면 수분이 걸려 자동 축소
     adaptive_retrieval_floor_similarity: float = 0.10  # 낮은 OCR 표현도 리랭커가 살릴 수 있게 보수적으로 완화
+    # 같은 정답인데 질문 표현(유의어 등)만 바꿔도 리랭커 절대점수가 0.004~0.15까지 흔들리는 게
+    # 실측으로 확인됨 — 절대 하한선 하나로는 이런 표현 변화에 약하다. 절대점수가 낮아도(위 하한선
+    # 미달) 다른 문서 후보보다 압도적으로 높으면(relative_margin배 이상) 구조하되, 무관한 후보가
+    # 우연히 다른 것보다 몇 배 높게 나와 헛답을 만들 위험을 막기 위해 아주 낮은 최소선(low_floor)도
+    # 같이 요구한다. 두 조건 다 0으로 두면 이 안전장치가 꺼진 채로 기존 동작만 한다(롤백용).
+    # 아래 기본값은 오늘 실측(0.066/0.0041로 걸러졌던 정답, 무관 후보는 0.0001~0.02 수준)에
+    # 근거해 정함 — 실 사용 중 오탐이 보이면 이 값들부터 조정할 것.
+    adaptive_retrieval_relative_margin_low_floor: float = 0.002
+    adaptive_retrieval_relative_margin: float = 4.0
     retrieval_max_chunks_per_document: int = 3  # 한 문서가 최종 근거를 독점하지 않도록 제한
 
     # --- 검색 힌트 ---

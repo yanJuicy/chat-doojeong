@@ -43,6 +43,42 @@ def reciprocal_rank_fuse(
     return fused
 
 
+def rescue_by_relative_margin(
+    reranked: list[SearchResult],
+    *,
+    low_floor: float,
+    margin: float,
+) -> list[SearchResult]:
+    """절대점수는 하한선 밑이어도, 다른 문서의 최고 후보보다 margin배 이상 높으면 1위 후보만 구조한다.
+
+    실측 확인: 같은 정답 청크인데 질문 표현(유의어/격식)만 바꿔도 리랭커 절대점수가
+    0.004~0.15까지 흔들린다. 절대 하한선만으로는 이런 표현 변화에 약해서, "다른 문서
+    후보들보다 압도적으로 앞서는가"라는 상대적 신호를 보조로 쓴다.
+
+    다만 상대 격차만 보면, 정답이 없는 질문에서도 노이즈 후보 하나가 다른 노이즈보다
+    우연히 몇 배 높게 나와 헛답을 만들 위험이 있다 — 그래서 low_floor(순수 노이즈보다는
+    확실히 높은, 그러나 기존 하한선보다는 훨씬 낮은 절대 최소선)를 반드시 같이 요구한다.
+    경쟁 문서가 아예 없으면(후보가 사실상 한 문서뿐이면) 비교 대상이 없다는 뜻이라
+    low_floor만 넘으면 통과시킨다 — 배수 조건 자체가 성립하지 않기 때문이다.
+    """
+    if low_floor <= 0 or margin <= 0 or not reranked:
+        return []
+    ordered = sorted(reranked, key=lambda candidate: candidate.score, reverse=True)
+    top = ordered[0]
+    if top.score < low_floor:
+        return []
+    top_document_id = str(top.metadata.get("document_id") or "")
+    other_document_best = 0.0
+    for candidate in ordered[1:]:
+        document_id = str(candidate.metadata.get("document_id") or "")
+        if document_id and document_id != top_document_id:
+            other_document_best = candidate.score
+            break
+    if other_document_best > 0.0 and (top.score / max(other_document_best, 1e-9)) < margin:
+        return []
+    return [top]
+
+
 def apply_relevance_floor_with_safe_rescue(
     query: str,
     first_stage: list[SearchResult],
@@ -51,13 +87,16 @@ def apply_relevance_floor_with_safe_rescue(
     floor: float,
     top_k: int,
     explicit_document_ids: Collection[str] = (),
+    relative_margin_low_floor: float = 0.0,
+    relative_margin: float = 0.0,
 ) -> tuple[list[SearchResult], bool]:
     """고정 floor를 우선 적용하고, 전멸한 질문만 제한적으로 구조한다.
 
     명시 회사/제품 라벨이 있는 질문은 라벨로 확정된 문서 ID 안에서만 RRF
     후보를 구조한다. 따라서 cross-encoder의 질문별 절대점수 스케일이 낮아도
     정답 라벨 문서가 전멸하지 않으면서, 다른 엔티티 문서가 섞이지 않는다.
-    라벨이 없는 질문은 문서명에서 대상 핵심어가, 본문에서 속성 핵심어가
+    라벨이 없는 질문은 상대적 격차(rescue_by_relative_margin)로 먼저 구조를
+    시도하고, 그래도 안 되면 문서명에서 대상 핵심어가, 본문에서 속성 핵심어가
     각각 확인되는 후보만 구조한다.
     """
     filtered = [candidate for candidate in reranked if candidate.score >= floor]
@@ -82,6 +121,12 @@ def apply_relevance_floor_with_safe_rescue(
 
     if filtered:
         return filtered, False
+
+    margin_rescued = rescue_by_relative_margin(
+        reranked, low_floor=relative_margin_low_floor, margin=relative_margin
+    )
+    if margin_rescued:
+        return margin_rescued, True
 
     terms = query_terms(query)
     if not terms:

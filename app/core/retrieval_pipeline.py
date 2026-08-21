@@ -156,12 +156,18 @@ async def _search_broad_lexical_chunks(question: str, limit: int = 256) -> list[
     ]
 
 
-async def rerank_candidates(
+async def score_candidates(
     question: str,
     batch: CandidateBatch,
     reranker: BgeRerankerV2,
 ) -> list[SearchResult]:
-    """후보 전체를 점수화한 뒤 보수적 가산점·하한·다양화를 적용한다."""
+    """후보 전체를 점수화하고 가산점까지 적용한다 (하한선/다양화 적용 전).
+
+    rerank_candidates가 쓰는 첫 단계를 그대로 분리해뒀다 — 평가/디버깅 목적으로
+    "하한선을 적용하기 전 원점수"가 필요한 곳(예: /api/debug/retrieve)에서
+    이 함수만 따로 불러 쓸 수 있게 하기 위함. 실제 답변 파이프라인(rerank_candidates)의
+    동작은 이 리팩터링 전후로 동일하다.
+    """
     candidates = batch.candidates
     labeled_document_ids = batch.labeled_document_ids
     if settings.reranker_enabled and reranker.using_cuda:
@@ -186,6 +192,18 @@ async def rerank_candidates(
                 result.score = min(1.0, result.score + settings.explicit_label_boost_weight)
         reranked.sort(key=lambda result: result.score, reverse=True)
     boost_exact_identifiers(reranked, question, settings.exact_identifier_boost_weight)
+    return reranked
+
+
+async def rerank_candidates(
+    question: str,
+    batch: CandidateBatch,
+    reranker: BgeRerankerV2,
+) -> list[SearchResult]:
+    """후보 전체를 점수화한 뒤 보수적 가산점·하한·다양화를 적용한다."""
+    candidates = batch.candidates
+    labeled_document_ids = batch.labeled_document_ids
+    reranked = await score_candidates(question, batch, reranker)
 
     reranked, floor_rescue_applied = apply_relevance_floor_with_safe_rescue(
         question,
@@ -194,6 +212,8 @@ async def rerank_candidates(
         floor=settings.adaptive_retrieval_floor_similarity,
         top_k=settings.reranker_top_k,
         explicit_document_ids=labeled_document_ids,
+        relative_margin_low_floor=settings.adaptive_retrieval_relative_margin_low_floor,
+        relative_margin=settings.adaptive_retrieval_relative_margin,
     )
     if not reranked and not labeled_document_ids:
         broad_candidates = await _search_broad_lexical_chunks(question)
