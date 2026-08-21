@@ -1224,41 +1224,51 @@ async def _run_chat_pipeline(
         stage_timings.append({"stage": current_stage, "seconds": round(time.monotonic() - t0, 3)})
         yield ("timing", stage_timings[-1])
 
-        images = [
-            ChatImage(image_url=f"/images/{r.metadata['image_path']}", caption=r.text, chunk_id=r.chunk_id)
-            for r in reranked
-            if r.metadata.get("image_path")
-        ]
+        # 리랭킹 후보가 있어도(floor 안전 구조 등으로) LLM이 실제로는 답을 못 찾았다고
+        # 판단하면, 그 근거 없는 후보들의 이미지/출처를 화면에 보여주면 안 된다 —
+        # "확인할 수 없습니다"라고 답하면서 사진은 뜨는 모순을 막는다.
+        is_grounded_answer = "확인할 수 없습니다" not in answer
 
-        # 답변에 실제로 쓰인 컨텍스트(reranked)의 출처 문서 — 문서 단위로 중복 제거하고, 그 문서에서
-        # 나온 청크 중 가장 높은 유사도를 대표값으로 남긴다. 파일명은 콘솔에서 클릭해 원본을 열 때 필요하다.
-        best_similarity_by_doc: dict[str, dict] = {}
-        for r in reranked:
-            doc_id = r.metadata.get("document_id")
-            if not doc_id:
-                continue
-            existing = best_similarity_by_doc.get(doc_id)
-            if existing is None or r.score > existing["similarity"]:
-                best_similarity_by_doc[doc_id] = {
-                    "similarity": round(r.score, 4),
-                    "page_number": r.metadata.get("page_number"),
-                }
+        images = (
+            [
+                ChatImage(image_url=f"/images/{r.metadata['image_path']}", caption=r.text, chunk_id=r.chunk_id)
+                for r in reranked
+                if r.metadata.get("image_path")
+            ]
+            if is_grounded_answer
+            else []
+        )
 
         sources: list[ChatSource] = []
-        if best_similarity_by_doc:
-            sources = sorted(
-                (
-                    ChatSource(
-                        document_id=doc_id,
-                        filename=context_filenames.get(doc_id, "(삭제된 문서)"),
-                        page_number=info["page_number"],
-                        similarity=info["similarity"],
-                    )
-                    for doc_id, info in best_similarity_by_doc.items()
-                ),
-                key=lambda s: s.similarity,
-                reverse=True,
-            )
+        if is_grounded_answer:
+            # 답변에 실제로 쓰인 컨텍스트(reranked)의 출처 문서 — 문서 단위로 중복 제거하고, 그 문서에서
+            # 나온 청크 중 가장 높은 유사도를 대표값으로 남긴다. 파일명은 콘솔에서 클릭해 원본을 열 때 필요하다.
+            best_similarity_by_doc: dict[str, dict] = {}
+            for r in reranked:
+                doc_id = r.metadata.get("document_id")
+                if not doc_id:
+                    continue
+                existing = best_similarity_by_doc.get(doc_id)
+                if existing is None or r.score > existing["similarity"]:
+                    best_similarity_by_doc[doc_id] = {
+                        "similarity": round(r.score, 4),
+                        "page_number": r.metadata.get("page_number"),
+                    }
+
+            if best_similarity_by_doc:
+                sources = sorted(
+                    (
+                        ChatSource(
+                            document_id=doc_id,
+                            filename=context_filenames.get(doc_id, "(삭제된 문서)"),
+                            page_number=info["page_number"],
+                            similarity=info["similarity"],
+                        )
+                        for doc_id, info in best_similarity_by_doc.items()
+                    ),
+                    key=lambda s: s.similarity,
+                    reverse=True,
+                )
 
         response = ChatResponse(
             answer=answer,
@@ -1329,6 +1339,56 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         if kind == "error":
             raise HTTPException(status_code=500, detail=f"[{payload['stage']}] 단계에서 실패: {payload['message']}")
     raise HTTPException(status_code=500, detail="답변 생성 파이프라인이 결과 없이 끝났습니다.")
+
+
+@app.post("/api/debug/retrieve")
+async def debug_retrieve(request: Request, body: ChatRequest) -> dict:
+    """
+    평가용: LLM 답변 생성 없이 검색+리랭킹까지만 수행하고, 실제로 반환되는 최종 청크
+    목록을 문서별 중복 제거 없이 그대로 돌려준다. /api/chat의 sources는 문서당 대표
+    청크 1개로 합쳐지기 때문에(응답 요약용), Recall@K/MRR@K 같은 검색 품질 평가에는
+    이 엔드포인트가 필요해서 별도로 추가했다. 콘솔 UI에는 노출하지 않는다.
+    """
+    embedding_provider = request.app.state.embedding_provider
+    vector_store = request.app.state.vector_store
+    reranker = request.app.state.reranker
+    intent_classifier = request.app.state.intent_classifier
+
+    search_question = expand_search_query(body.question) if settings.query_expansion_enabled else body.question
+    dense_vectors, sparse_vectors = await embedding_provider.embed_hybrid([search_question])
+    query_dense = dense_vectors[0]
+    query_sparse = sparse_vectors[0]
+    intent_scores = await intent_classifier.classify(body.question, precomputed_dense_vector=query_dense)
+    query_signature = build_query_signature(
+        body.question,
+        available_labels=await _get_available_document_labels(),
+        intent_scores=intent_scores,
+    )
+    candidate_batch = await retrieve_candidates(
+        body.question,
+        query_dense,
+        query_sparse,
+        vector_store,
+        reranker,
+        explicit_labels=list(query_signature.labels),
+    )
+    reranked = await rerank_candidates(body.question, candidate_batch, reranker)
+
+    return {
+        "question": body.question,
+        "results": [
+            {
+                "rank": index + 1,
+                "chunk_id": result.chunk_id,
+                "document_id": result.metadata.get("document_id"),
+                "filename": result.metadata.get("filename"),
+                "page": result.metadata.get("page_number"),
+                "score": round(result.score, 4),
+                "text": result.text,
+            }
+            for index, result in enumerate(reranked)
+        ],
+    }
 
 
 @app.get("/api/chat/stream")
