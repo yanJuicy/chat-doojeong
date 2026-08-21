@@ -1289,7 +1289,10 @@ async def _run_chat_pipeline(
         # 근거 문서가 없는("모른다") 답은 캐시하지 않는다 — 이후 새 문서가 업로드돼도
         # 이 캐시를 무효화할 방법이 없어(source_document_ids가 비어 있음), 답을 찾을 수
         # 있게 된 뒤에도 의미상 비슷한 질문이 계속 "모른다"를 재사용하게 되기 때문.
-        if reranked:
+        # reranked만 보면 안 된다 — 하한선 안전 구조 등으로 후보가 있어도 LLM이 실제로는
+        # "확인할 수 없습니다"라고 답하는 경우가 있어(images/sources를 비우는 로직과 동일한
+        # 원인), 이때도 캐시하면 새 문서를 올린 뒤에도 이 "모른다" 답이 계속 재사용된다.
+        if reranked and is_grounded_answer:
             question_cache.store(
                 question=body.question,
                 question_vector=query_dense,
