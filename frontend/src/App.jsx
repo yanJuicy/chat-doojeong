@@ -2,6 +2,7 @@ import { useState } from "react";
 import ChatWorkspace from "./components/chat/ChatWorkspace";
 import DocumentDrawer from "./components/documents/DocumentDrawer";
 import LeftRail from "./components/layout/LeftRail";
+import MaterialReceiptPanel from "./components/materialReceipt/MaterialReceiptPanel";
 import MobileSourcePanel from "./components/sources/MobileSourcePanel";
 import SourceRail from "./components/sources/SourceRail";
 import useChat from "./hooks/useChat";
@@ -11,6 +12,7 @@ import useToast from "./hooks/useToast";
 
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [materialReceiptOpen, setMaterialReceiptOpen] = useState(false);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
   const { toast, showToast } = useToast();
   const health = useServerHealth();
@@ -47,6 +49,10 @@ export default function App() {
         onOpenDocuments={() => {
           setConversationMenuOpen(false);
           setDrawerOpen(true);
+        }}
+        onOpenMaterialReceipt={() => {
+          setConversationMenuOpen(false);
+          setMaterialReceiptOpen(true);
         }}
         documentCount={documents.documents.length}
         mobileOpen={conversationMenuOpen}
@@ -115,6 +121,7 @@ export default function App() {
         onReextract={documents.restartExtraction}
         actionPending={documents.actionPending}
       />
+      <MaterialReceiptPanel open={materialReceiptOpen} onClose={() => setMaterialReceiptOpen(false)} />
 
       {toast && (
         <div className="toast" role="status">
