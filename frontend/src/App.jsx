@@ -4,7 +4,6 @@ import DocumentDrawer from "./components/documents/DocumentDrawer";
 import LeftRail from "./components/layout/LeftRail";
 import MobileSourcePanel from "./components/sources/MobileSourcePanel";
 import SourceRail from "./components/sources/SourceRail";
-import WeeklyReportDrawer from "./components/weekly-report/WeeklyReportDrawer";
 import useChat from "./hooks/useChat";
 import useDocuments from "./hooks/useDocuments";
 import useServerHealth from "./hooks/useServerHealth";
@@ -13,7 +12,6 @@ import useWeeklyReport from "./hooks/useWeeklyReport";
 
 export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [weeklyReportOpen, setWeeklyReportOpen] = useState(false);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
   const { toast, showToast } = useToast();
   const health = useServerHealth();
@@ -55,10 +53,6 @@ export default function App() {
           setDrawerOpen(true);
         }}
         documentCount={documents.documents.length}
-        onOpenWeeklyReport={() => {
-          setConversationMenuOpen(false);
-          setWeeklyReportOpen(true);
-        }}
         mobileOpen={conversationMenuOpen}
         onCloseMobile={() => setConversationMenuOpen(false)}
       />
@@ -104,6 +98,7 @@ export default function App() {
       <DocumentDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
+        weeklyReport={weeklyReport}
         documents={documents.documents}
         loading={documents.loading}
         error={documents.error}
@@ -123,27 +118,6 @@ export default function App() {
         onRetry={documents.retryProcessing}
         onReextract={documents.restartExtraction}
         actionPending={documents.actionPending}
-      />
-
-      <WeeklyReportDrawer
-        open={weeklyReportOpen}
-        onClose={() => setWeeklyReportOpen(false)}
-        department={weeklyReport.department}
-        departments={weeklyReport.departments}
-        onDepartmentChange={weeklyReport.setDepartment}
-        text={weeklyReport.text}
-        onTextChange={weeklyReport.setText}
-        onSubmit={weeklyReport.submit}
-        submitting={weeklyReport.submitting}
-        loadingEntries={weeklyReport.loadingEntries}
-        currentPeriod={weeklyReport.currentPeriod}
-        nextPeriod={weeklyReport.nextPeriod}
-        currentWeekEntries={weeklyReport.currentWeekEntries}
-        nextWeekEntries={weeklyReport.nextWeekEntries}
-        onEditEntry={weeklyReport.editEntry}
-        onDeleteEntry={weeklyReport.removeEntry}
-        onUploadDocument={weeklyReport.uploadDocument}
-        uploading={weeklyReport.uploading}
       />
 
       {toast && (

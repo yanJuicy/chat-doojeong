@@ -1,5 +1,4 @@
 import ConversationList from "../conversations/ConversationList";
-
 export default function LeftRail({
   onNewChat,
   onDeleteChat,
@@ -11,7 +10,6 @@ export default function LeftRail({
   onDeleteConversation,
   onOpenDocuments,
   documentCount,
-  onOpenWeeklyReport,
   mobileOpen = false,
   onCloseMobile,
 }) {
@@ -25,11 +23,11 @@ export default function LeftRail({
       >
         닫기 ×
       </button>
-      <div className="brand-mark" aria-label="Document intelligence">
-        <span>DI</span>
+      <div className="brand-mark" aria-label="두정테크 문서 AI">
+        <span>두정</span>
         <div>
-          <strong>Document</strong>
-          <small>intelligence</small>
+          <strong>두정테크</strong>
+          <small>문서 AI</small>
         </div>
       </div>
 
@@ -47,10 +45,6 @@ export default function LeftRail({
           <span aria-hidden="true">▤</span>
           문서 관리
           <b>{documentCount}</b>
-        </button>
-        <button className="nav-item" type="button" onClick={onOpenWeeklyReport}>
-          <span aria-hidden="true">▦</span>
-          주간보고서 모드
         </button>
         <button
           className="nav-item delete-chat"
