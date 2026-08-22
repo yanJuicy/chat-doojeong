@@ -162,6 +162,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
                                 content=parsed.content,
                                 source="document",
                                 source_document_id=document_id,
+                                source_format=parsed.source_format,
                             )
                         )
         finally:

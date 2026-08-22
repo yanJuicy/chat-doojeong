@@ -206,6 +206,13 @@ class WorkReportEntry(Base):
     # 원문과 대조해서 검증/수정할 수 있게 남겨둔다.
     raw_input: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # source=document일 때만 채워짐. 원본 표 셀에서 이 항목이 어떤 표현 형식으로 쓰여
+    # 있었는지(report_table_parser가 정규식으로 감지) — "bullet:•", "bullet:-"처럼 글머리
+    # 기호를 썼으면 그 기호를, 기호 없이 문장 하나로 쓰여 있었으면 "prose"를 저장한다.
+    # 최종 보고서 DOCX를 만들 때 이 부서의 원본 문서가 쓰던 표현 형식을 그대로 재현하는 데 쓴다
+    # (weekly_report_composer.detect_department_format 참고).
+    source_format: Mapped[str | None] = mapped_column(String, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

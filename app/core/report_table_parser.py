@@ -17,7 +17,7 @@ _DEPARTMENT_PATTERN = re.compile(r"■\s*부서명\s*[:：]\s*(.+)")
 _PERIOD_PATTERN = re.compile(
     r"(\d{4})\.(\d{2})\.(\d{2})\s*~\s*(\d{4})\.(\d{2})\.(\d{2})"
 )
-_BULLET_PATTERN = re.compile(r"^\s*[•·▪]\s*")
+_BULLET_PATTERN = re.compile(r"^\s*([•·▪-])\s*")
 _KOREAN_SYLLABLE = re.compile(r"[가-힣]")
 
 
@@ -29,6 +29,9 @@ class ParsedReportEntry:
     period_end: date
     source_category: str
     content: str
+    # 원본 셀에서 이 항목이 쓰여 있던 표현 형식. 글머리 기호를 썼으면 "bullet:<기호>"
+    # (예: "bullet:•", "bullet:-"), 기호 없이 문장 하나로 쓰여 있었으면 "prose".
+    source_format: str
 
 
 def extract_department(page_text: str) -> str | None:
@@ -72,30 +75,33 @@ def _join_wrapped_lines(lines: list[str]) -> str:
     return result
 
 
-def _split_cell_into_items(cell_text: str) -> list[str]:
-    """셀 안의 여러 항목을 글머리 기호(•) 기준으로 나눈다.
+def _split_cell_into_items(cell_text: str) -> tuple[str, list[str]]:
+    """셀 안의 여러 항목을 글머리 기호(•, -) 기준으로 나누고, 감지된 표현 형식도 같이 반환한다.
 
     글머리 기호가 없는 셀(항목이 하나뿐이거나, 원본이 불릿을 안 쓴 경우)은 셀 전체를
-    항목 하나로 취급한다 — 불릿 유무를 가정하지 않는다.
+    항목 하나("prose")로 취급한다 — 불릿 유무를 가정하지 않는다.
     """
     raw_lines = [line for line in cell_text.split("\n") if line.strip()]
     if not raw_lines:
-        return []
+        return "prose", []
 
     if not any(_BULLET_PATTERN.match(line) for line in raw_lines):
-        return [_join_wrapped_lines([line.strip() for line in raw_lines])]
+        return "prose", [_join_wrapped_lines([line.strip() for line in raw_lines])]
 
+    marker: str | None = None
     items: list[list[str]] = []
     for line in raw_lines:
         stripped = line.strip()
-        if _BULLET_PATTERN.match(stripped):
-            items.append([_BULLET_PATTERN.sub("", stripped).strip()])
+        match = _BULLET_PATTERN.match(stripped)
+        if match:
+            marker = marker or match.group(1)
+            items.append([_BULLET_PATTERN.sub("", stripped, count=1).strip()])
         elif items:
             items[-1].append(stripped)
         # 첫 줄부터 불릿이 아니면(드묾) 버리지 않고 무시 — 실제로 이런 헤더성 잡음은
         # 표 밖 텍스트에서 이미 걸러지므로 여기까지 들어오는 경우는 거의 없다.
 
-    return [_join_wrapped_lines(lines) for lines in items if lines]
+    return f"bullet:{marker}", [_join_wrapped_lines(lines) for lines in items if lines]
 
 
 def parse_report_table(rows: list[list[str | None]], page_text: str) -> list[ParsedReportEntry]:
@@ -130,7 +136,8 @@ def parse_report_table(rows: list[list[str | None]], page_text: str) -> list[Par
             if col_idx >= len(row):
                 continue
             cell_text = row[col_idx] or ""
-            for item in _split_cell_into_items(cell_text):
+            source_format, items = _split_cell_into_items(cell_text)
+            for item in items:
                 entries.append(
                     ParsedReportEntry(
                         department=department,
@@ -139,6 +146,7 @@ def parse_report_table(rows: list[list[str | None]], page_text: str) -> list[Par
                         period_end=period_end,
                         source_category=source_category,
                         content=item,
+                        source_format=source_format,
                     )
                 )
 

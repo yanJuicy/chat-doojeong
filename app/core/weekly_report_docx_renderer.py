@@ -72,16 +72,32 @@ def _format_period(block: ReportPeriodBlock) -> str:
     return f"({block.period_start.strftime('%Y.%m.%d')} ~ {block.period_end.strftime('%Y.%m.%d')})"
 
 
-def _fill_items_cell(cell, items: list, *, size: float = 10) -> None:
+def _bullet_prefix(source_format: str | None) -> str:
+    """부서가 업로드한 원본 문서가 쓰던 글머리 기호를 그대로 재현한다. 원본이 문장 하나로
+    (기호 없이) 쓰여 있었거나(prose), 문서를 한 번도 안 올린 부서(None)는 기본값 "•"."""
+    if source_format and source_format.startswith("bullet:"):
+        return source_format.removeprefix("bullet:")
+    return "•"
+
+
+def _fill_items_cell(cell, items: list, *, source_format: str | None = None, size: float = 10) -> None:
     paragraph = cell.paragraphs[0]
     if not items:
         _set_run_font(paragraph.add_run("-"), size=size)
         return
+    if source_format == "prose":
+        # 원본 문서가 글머리 기호 없이 문장 하나로 쓰던 부서 — 항목을 이어붙여 같은 형태로 낸다.
+        joined = " ".join(item.content for item in items)
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(2)
+        _set_run_font(paragraph.add_run(joined), size=size)
+        return
+    bullet = _bullet_prefix(source_format)
     for index, item in enumerate(items):
         target = paragraph if index == 0 else cell.add_paragraph()
         target.paragraph_format.space_before = Pt(0)
         target.paragraph_format.space_after = Pt(2)
-        _set_run_font(target.add_run(f"• {item.content}"), size=size)
+        _set_run_font(target.add_run(f"{bullet} {item.content}"), size=size)
 
 
 def render_weekly_report_docx(view: WeeklyReportView) -> bytes:
@@ -136,8 +152,8 @@ def render_weekly_report_docx(view: WeeklyReportView) -> bytes:
     category_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     _set_run_font(category_paragraph.add_run("사업관리"), size=10.5, bold=True)
 
-    _fill_items_cell(row.cells[1], view.current_week.items)
-    _fill_items_cell(row.cells[2], view.next_week.items)
+    _fill_items_cell(row.cells[1], view.current_week.items, source_format=view.source_format)
+    _fill_items_cell(row.cells[2], view.next_week.items, source_format=view.source_format)
 
     document.core_properties.title = f"주간 업무실적 및 계획 ({view.department})"
     stream = BytesIO()

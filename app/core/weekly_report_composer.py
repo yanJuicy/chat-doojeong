@@ -8,6 +8,7 @@ work_report_entries에 쌓인 항목을 모아 타겟 양식(구분 1개: "사�
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -49,6 +50,13 @@ class WeeklyReportView:
     department: str
     current_week: ReportPeriodBlock
     next_week: ReportPeriodBlock
+    # 이 부서가 업로드한 원본 문서들이 쓰던 표현 형식(report_table_parser가 정규식으로 감지해
+    # WorkReportEntry.source_format에 저장한 값의 다수결). 문서를 한 번도 안 올린 부서(채팅
+    # 입력만 있는 부서)는 None — 렌더러가 이때 기본 표현(•)으로 렌더링한다.
+    source_format: str | None = None
+
+
+_FORMAT_SAMPLE_SIZE = 30
 
 
 async def compose_weekly_report(
@@ -80,6 +88,18 @@ async def compose_weekly_report(
         current_entries = current_result.scalars().all()
         next_entries = next_result.scalars().all()
 
+        format_result = await session.execute(
+            select(WorkReportEntry.source_format)
+            .where(
+                WorkReportEntry.department == department,
+                WorkReportEntry.source == "document",
+                WorkReportEntry.source_format.is_not(None),
+            )
+            .order_by(WorkReportEntry.created_at.desc())
+            .limit(_FORMAT_SAMPLE_SIZE)
+        )
+        formats = [row[0] for row in format_result.all()]
+
     return WeeklyReportView(
         department=department,
         current_week=ReportPeriodBlock(
@@ -92,4 +112,5 @@ async def compose_weekly_report(
             period_end=next_period[1],
             items=[ReportItem(id=e.id, content=e.content) for e in next_entries],
         ),
+        source_format=Counter(formats).most_common(1)[0][0] if formats else None,
     )
