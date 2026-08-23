@@ -26,6 +26,9 @@ docker-compose.override.yml
 .python-version
 docs/hanju/blog
 
+# hj의 Windows devcontainer(Zed) 설정
+.devcontainer/
+
 
 .DS_Store
 
