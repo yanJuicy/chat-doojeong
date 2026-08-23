@@ -80,6 +80,10 @@ class UpdateEntryRequest(BaseModel):
     content: str
 
 
+# 채팅 정제 시 스타일 참고용으로 가져올 이 부서의 기존 문서 문장 개수.
+_STYLE_EXAMPLE_LIMIT = 5
+
+
 def create_work_reports_router(upload_dir: Path) -> APIRouter:
     router = APIRouter(prefix="/api/v1/work-reports", tags=["work-reports"])
 
@@ -208,7 +212,20 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
     @router.post("/chat-entry")
     async def chat_entry(request: Request, body: ChatEntryRequest) -> JSONResponse:
         llm_provider = request.app.state.llm_provider
-        refined = await refine_chat_input(body.text, llm_provider)
+
+        async with async_session_factory() as session:
+            style_result = await session.execute(
+                select(WorkReportEntry.content)
+                .where(
+                    WorkReportEntry.department == body.department,
+                    WorkReportEntry.source == "document",
+                )
+                .order_by(WorkReportEntry.created_at.desc())
+                .limit(_STYLE_EXAMPLE_LIMIT)
+            )
+            style_examples = [row[0] for row in style_result.all()]
+
+        refined = await refine_chat_input(body.text, llm_provider, style_examples=style_examples or None)
 
         entries_to_save = [
             WorkReportEntry(
