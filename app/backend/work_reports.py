@@ -35,7 +35,6 @@ DELETE /api/v1/work-reports/{entry_id}
 """
 from __future__ import annotations
 
-import io
 import uuid
 from datetime import date
 from pathlib import Path
@@ -44,9 +43,8 @@ from urllib.parse import quote
 import fitz  # PyMuPDF
 from fastapi import APIRouter, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
-from PIL import Image
 from pydantic import BaseModel
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import select
 
 from ..config import settings
 from ..core.report_chat_refiner import refine_chat_input
@@ -54,17 +52,10 @@ from ..core.report_table_parser import parse_report_table
 from ..core.weekly_report_composer import compose_weekly_report
 from ..core.weekly_report_docx_renderer import render_weekly_report_docx
 from ..core.work_report_indexing import deindex_entry, index_entry
-from ..db.models import WorkReportDocument, WorkReportEntry
+from ..db.models import WeeklyReportSource, WeeklyReportEntry
 from ..db.session import async_session_factory
 from ..services.table_extraction.engines.paddle_engine import PaddleTableEngine
-
-
-def _render_page_to_image(page, dpi: int) -> Image.Image:  # noqa: ANN001 — fitz.Page는 외부 라이브러리 타입
-    """스캔 페이지를 OCR용 이미지로 렌더링한다 (PdfExtractor._render_page_to_image와 동일 로직)."""
-    zoom = dpi / 72
-    matrix = fitz.Matrix(zoom, zoom)
-    pix = page.get_pixmap(matrix=matrix)
-    return Image.open(io.BytesIO(pix.tobytes("png")))
+from ..services.table_extraction.page_rendering import render_page_to_image
 
 
 class ChatEntryRequest(BaseModel):
@@ -78,6 +69,10 @@ class ChatEntryRequest(BaseModel):
 
 class UpdateEntryRequest(BaseModel):
     content: str
+
+
+# 채팅 정제 시 스타일 참고용으로 가져올 이 부서의 기존 문서 문장 개수.
+_STYLE_EXAMPLE_LIMIT = 5
 
 
 def create_work_reports_router(upload_dir: Path) -> APIRouter:
@@ -114,7 +109,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
                 },
             )
 
-        entries_to_save: list[WorkReportEntry] = []
+        entries_to_save: list[WeeklyReportEntry] = []
         pages_with_table = 0
         pages_without_table: list[int] = []
         pages_via_ocr: list[int] = []
@@ -137,7 +132,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
                     # 텍스트 레이어가 없는 스캔 페이지: PPStructureV3 OCR로 표를 인식한다.
                     if paddle_engine is None:
                         paddle_engine = PaddleTableEngine()
-                    image = _render_page_to_image(page, settings.scan_render_dpi)
+                    image = render_page_to_image(page, settings.scan_render_dpi)
                     grids, ocr_text = paddle_engine.extract_tables_as_grids(image)
                     for grid in grids:
                         grids_with_context.append((grid, ocr_text))
@@ -152,7 +147,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
                 for rows, context_text in grids_with_context:
                     for parsed in parse_report_table(rows, context_text):
                         entries_to_save.append(
-                            WorkReportEntry(
+                            WeeklyReportEntry(
                                 id=str(uuid.uuid4()),
                                 department=parsed.department,
                                 entry_type=parsed.entry_type,
@@ -170,7 +165,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
 
         async with async_session_factory() as session:
             session.add(
-                WorkReportDocument(
+                WeeklyReportSource(
                     id=document_id,
                     filename=safe_filename,
                     file_path=str(saved_path),
@@ -208,10 +203,23 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
     @router.post("/chat-entry")
     async def chat_entry(request: Request, body: ChatEntryRequest) -> JSONResponse:
         llm_provider = request.app.state.llm_provider
-        refined = await refine_chat_input(body.text, llm_provider)
+
+        async with async_session_factory() as session:
+            style_result = await session.execute(
+                select(WeeklyReportEntry.content)
+                .where(
+                    WeeklyReportEntry.department == body.department,
+                    WeeklyReportEntry.source == "document",
+                )
+                .order_by(WeeklyReportEntry.created_at.desc())
+                .limit(_STYLE_EXAMPLE_LIMIT)
+            )
+            style_examples = [row[0] for row in style_result.all()]
+
+        refined = await refine_chat_input(body.text, llm_provider, style_examples=style_examples or None)
 
         entries_to_save = [
-            WorkReportEntry(
+            WeeklyReportEntry(
                 id=str(uuid.uuid4()),
                 department=body.department,
                 entry_type=item.entry_type,
@@ -263,20 +271,22 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
             status_code=200,
             content={
                 "department": view.department,
-                "current_week": {
-                    "period": {
-                        "start": view.current_week.period_start.isoformat(),
-                        "end": view.current_week.period_end.isoformat(),
-                    },
-                    "items": [{"id": item.id, "content": item.content} for item in view.current_week.items],
+                "current_period": {
+                    "start": view.current_period.period_start.isoformat(),
+                    "end": view.current_period.period_end.isoformat(),
                 },
-                "next_week": {
-                    "period": {
-                        "start": view.next_week.period_start.isoformat(),
-                        "end": view.next_week.period_end.isoformat(),
-                    },
-                    "items": [{"id": item.id, "content": item.content} for item in view.next_week.items],
+                "next_period": {
+                    "start": view.next_period.period_start.isoformat(),
+                    "end": view.next_period.period_end.isoformat(),
                 },
+                "rows": [
+                    {
+                        "category": row.category,
+                        "current_items": [{"id": item.id, "content": item.content} for item in row.current_items],
+                        "next_items": [{"id": item.id, "content": item.content} for item in row.next_items],
+                    }
+                    for row in view.rows
+                ],
             },
         )
 
@@ -313,7 +323,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
         """지금까지 한 번이라도 쓰인 부서명 목록(중복 제거, 가나다순) — 프론트에서 자동완성/드롭다운으로 씀."""
         async with async_session_factory() as session:
             result = await session.execute(
-                select(WorkReportEntry.department).distinct().order_by(WorkReportEntry.department)
+                select(WeeklyReportEntry.department).distinct().order_by(WeeklyReportEntry.department)
             )
             departments = [row[0] for row in result.all() if row[0]]
         return JSONResponse(status_code=200, content={"success": True, "data": {"departments": departments}})
@@ -325,13 +335,13 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
         department: str | None = None,
     ) -> JSONResponse:
         async with async_session_factory() as session:
-            query = select(WorkReportEntry).order_by(WorkReportEntry.period_start, WorkReportEntry.entry_type)
+            query = select(WeeklyReportEntry).order_by(WeeklyReportEntry.period_start, WeeklyReportEntry.entry_type)
             if start is not None:
-                query = query.where(WorkReportEntry.period_end >= start)
+                query = query.where(WeeklyReportEntry.period_end >= start)
             if end is not None:
-                query = query.where(WorkReportEntry.period_start <= end)
+                query = query.where(WeeklyReportEntry.period_start <= end)
             if department is not None:
-                query = query.where(WorkReportEntry.department == department)
+                query = query.where(WeeklyReportEntry.department == department)
             result = await session.execute(query)
             entries = result.scalars().all()
 
@@ -370,7 +380,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
             )
 
         async with async_session_factory() as session:
-            entry = await session.get(WorkReportEntry, entry_id)
+            entry = await session.get(WeeklyReportEntry, entry_id)
             if entry is None:
                 return JSONResponse(
                     status_code=404,
@@ -395,7 +405,7 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
     @router.delete("/{entry_id}")
     async def delete_entry(request: Request, entry_id: str) -> JSONResponse:
         async with async_session_factory() as session:
-            entry = await session.get(WorkReportEntry, entry_id)
+            entry = await session.get(WeeklyReportEntry, entry_id)
             if entry is None:
                 return JSONResponse(
                     status_code=404,
@@ -404,9 +414,8 @@ def create_work_reports_router(upload_dir: Path) -> APIRouter:
                         "error": {"code": "NOT_FOUND", "message": "해당 항목을 찾을 수 없습니다."},
                     },
                 )
-            await session.execute(sa_delete(WorkReportEntry).where(WorkReportEntry.id == entry_id))
-            await session.commit()
-
+            # deindex_entry가 청크/라벨/이 행 자체(=Document)와 Qdrant 벡터를 전부 지운다 —
+            # WeeklyReportEntry가 이제 documents 행 자신이라 별도로 행을 먼저 지울 필요가 없다.
             vector_store = request.app.state.vector_store
             await deindex_entry(session, vector_store, entry_id)
 

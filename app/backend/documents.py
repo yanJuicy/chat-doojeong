@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from ..config import settings
-from ..db.models import Document, DocumentLabel, DocumentStatus
+from ..db.models import Document, DocumentLabel, DocumentStatus, RagUploadDocument
 from ..db.session import async_session_factory
 from ..zip_ingestion import SUPPORTED_EXTENSIONS
 
@@ -95,7 +95,7 @@ def create_documents_router(
         file_hash = hashlib.sha256(file_bytes).hexdigest()
 
         async with async_session_factory() as session:
-            existing = await session.execute(select(Document).where(Document.file_hash == file_hash))
+            existing = await session.execute(select(RagUploadDocument).where(RagUploadDocument.file_hash == file_hash))
             existing_doc = existing.scalars().first()
             if existing_doc is not None:
                 return JSONResponse(
@@ -118,7 +118,7 @@ def create_documents_router(
             saved_path = upload_dir / f"{document_id}_{safe_filename}"
             saved_path.write_bytes(file_bytes)
 
-            doc = Document(
+            doc = RagUploadDocument(
                 id=document_id,
                 filename=safe_filename,
                 file_path=str(saved_path),

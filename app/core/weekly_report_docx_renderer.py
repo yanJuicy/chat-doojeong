@@ -1,6 +1,6 @@
 """
-WeeklyReportView를 원본 "주간 업무실적 및 계획" 양식(구분 1개: 사업관리)과 같은
-모양의 DOCX로 렌더링한다.
+WeeklyReportView를 "주간 업무실적 및 계획" 양식의 DOCX로 렌더링한다. 구분 행 개수는
+view.rows 길이만큼 동적으로 생성된다(원본 문서가 구분을 여러 개 썼으면 그대로 여러 행).
 """
 from __future__ import annotations
 
@@ -16,10 +16,12 @@ from docx.shared import Inches, Pt
 # 원본 "주간 업무실적 및 계획" 양식의 열 비율(좁은 "구분" 칸 + 넓은 실적/계획 칸 두 개)을
 # 그대로 따른다 — python-docx는 열 너비를 지정 안 하면 3등분으로 균등 배분해서, "구분"
 # 칸만 유독 헐렁하고 내용 칸은 문단 텍스트가 부대끼며 잡히는 문제가 있었다.
-_CATEGORY_COLUMN_WIDTH = Inches(0.95)  # "사업관리"(4글자, 굵게)가 한 줄로 안 잘리게 여유 있게 잡음
-_CONTENT_COLUMN_WIDTH = Inches(2.98)
+# 구분 칸은 "사업관리"(4글자)만 가정했던 예전과 달리 이제 "인프라 / 배포"처럼 더 긴
+# 구분명도 들어와서, 살짝 더 넓게 잡는다(줄바꿈 허용).
+_CATEGORY_COLUMN_WIDTH = Inches(1.3)
+_CONTENT_COLUMN_WIDTH = Inches(2.8)
 
-from .weekly_report_composer import ReportPeriodBlock, WeeklyReportView, week_of_month_label
+from .weekly_report_composer import ReportPeriod, WeeklyReportView, week_of_month_label
 
 
 def _set_run_font(run, *, size: float, bold: bool = False) -> None:
@@ -50,14 +52,6 @@ def _set_cell_margins(cell, *, top: int = 120, bottom: int = 120, left: int = 14
     tc_pr.append(margins)
 
 
-def _set_cell_no_wrap(cell) -> None:
-    """셀 안 텍스트가 폭에 맞춰 줄바꿈되지 않고 한 줄을 유지하게 한다 — "사업관리"처럼
-    짧은 단어가 여유 있는 열 폭에서도 어중간하게 두 줄로 잘려 보이는 걸 막는 안전장치."""
-    tc_pr = cell._tc.get_or_add_tcPr()
-    no_wrap = OxmlElement("w:noWrap")
-    tc_pr.append(no_wrap)
-
-
 def _set_cell_width(cell, width) -> None:
     """python-docx는 열 너비를 table.columns뿐 아니라 각 셀에도 따로 지정해야 워드에서 반영된다."""
     cell.width = width
@@ -68,8 +62,8 @@ def _set_cell_width(cell, width) -> None:
     tc_pr.append(tc_w)
 
 
-def _format_period(block: ReportPeriodBlock) -> str:
-    return f"({block.period_start.strftime('%Y.%m.%d')} ~ {block.period_end.strftime('%Y.%m.%d')})"
+def _format_period(period: ReportPeriod) -> str:
+    return f"({period.period_start.strftime('%Y.%m.%d')} ~ {period.period_end.strftime('%Y.%m.%d')})"
 
 
 def _bullet_prefix(source_format: str | None) -> str:
@@ -111,14 +105,14 @@ def render_weekly_report_docx(view: WeeklyReportView) -> bytes:
     title = document.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.paragraph_format.space_after = Pt(4)
-    week_label = week_of_month_label(view.current_week.period_start)
+    week_label = week_of_month_label(view.current_period.period_start)
     _set_run_font(title.add_run(f"주간 업무실적 및 계획 ({week_label})"), size=18, bold=True)
 
     dept_paragraph = document.add_paragraph()
     dept_paragraph.paragraph_format.space_after = Pt(10)
     _set_run_font(dept_paragraph.add_run(f"■ 부서명 : {view.department}"), size=10.5, bold=True)
 
-    table = document.add_table(rows=2, cols=3)
+    table = document.add_table(rows=1 + len(view.rows), cols=3)
     table.style = "Table Grid"
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False  # 열 너비를 아래에서 직접 지정하므로, 워드가 내용 길이 보고 임의로 재배분하지 않게 끈다.
@@ -131,8 +125,8 @@ def render_weekly_report_docx(view: WeeklyReportView) -> bytes:
 
     headers = (
         "구분",
-        f"업무 실적\n{_format_period(view.current_week)}",
-        f"업무 계획\n{_format_period(view.next_week)}",
+        f"업무 실적\n{_format_period(view.current_period)}",
+        f"업무 계획\n{_format_period(view.next_period)}",
     )
     for index, header in enumerate(headers):
         cell = table.cell(0, index)
@@ -146,14 +140,14 @@ def render_weekly_report_docx(view: WeeklyReportView) -> bytes:
             sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
             _set_run_font(sub.add_run(line), size=9)
 
-    row = table.rows[1]
-    _set_cell_no_wrap(row.cells[0])
-    category_paragraph = row.cells[0].paragraphs[0]
-    category_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _set_run_font(category_paragraph.add_run("사업관리"), size=10.5, bold=True)
+    for row_index, category_row in enumerate(view.rows, start=1):
+        row = table.rows[row_index]
+        category_paragraph = row.cells[0].paragraphs[0]
+        category_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _set_run_font(category_paragraph.add_run(category_row.category), size=10.5, bold=True)
 
-    _fill_items_cell(row.cells[1], view.current_week.items, source_format=view.source_format)
-    _fill_items_cell(row.cells[2], view.next_week.items, source_format=view.source_format)
+        _fill_items_cell(row.cells[1], category_row.current_items, source_format=view.source_format)
+        _fill_items_cell(row.cells[2], category_row.next_items, source_format=view.source_format)
 
     document.core_properties.title = f"주간 업무실적 및 계획 ({view.department})"
     stream = BytesIO()

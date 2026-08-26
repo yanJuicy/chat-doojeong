@@ -6,7 +6,7 @@ from io import BytesIO
 
 from docx import Document as DocxDocument
 
-from app.core.weekly_report_composer import ReportItem, ReportPeriodBlock, WeeklyReportView
+from app.core.weekly_report_composer import ReportCategoryRow, ReportItem, ReportPeriod, WeeklyReportView
 from app.core.weekly_report_docx_renderer import render_weekly_report_docx
 
 
@@ -14,12 +14,15 @@ def _view(items: list[str], *, source_format: str | None) -> WeeklyReportView:
     period = (date(2026, 8, 17), date(2026, 8, 23))
     return WeeklyReportView(
         department="개발팀",
-        current_week=ReportPeriodBlock(
-            period_start=period[0],
-            period_end=period[1],
-            items=[ReportItem(id=str(i), content=text) for i, text in enumerate(items)],
-        ),
-        next_week=ReportPeriodBlock(period_start=period[0], period_end=period[1], items=[]),
+        current_period=ReportPeriod(period_start=period[0], period_end=period[1]),
+        next_period=ReportPeriod(period_start=period[0], period_end=period[1]),
+        rows=[
+            ReportCategoryRow(
+                category="사업관리",
+                current_items=[ReportItem(id=str(i), content=text) for i, text in enumerate(items)],
+                next_items=[],
+            )
+        ],
         source_format=source_format,
     )
 

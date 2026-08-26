@@ -83,8 +83,9 @@ from .db.models import (
     DocumentChunk,
     DocumentLabel,
     DocumentStatus,
-    WorkReportDocument,
-    WorkReportEntry,
+    RagUploadDocument,
+    WeeklyReportEntry,
+    WeeklyReportSource,
 )
 from .db.session import async_session_factory
 from .report_api import create_shipment_report_router
@@ -217,7 +218,7 @@ async def upload_document(file: UploadFile, labels: list[str] = Form(default=[])
     file_hash = hashlib.sha256(file_bytes).hexdigest()
 
     async with async_session_factory() as session:
-        existing = await session.execute(select(Document).where(Document.file_hash == file_hash))
+        existing = await session.execute(select(RagUploadDocument).where(RagUploadDocument.file_hash == file_hash))
         existing_doc = existing.scalars().first()
         if existing_doc is not None:
             logger.info("중복 파일 업로드 감지: 기존 document_id=%s와 해시 일치", existing_doc.id)
@@ -231,7 +232,7 @@ async def upload_document(file: UploadFile, labels: list[str] = Form(default=[])
         saved_path = _UPLOAD_DIR / f"{document_id}_{safe_filename}"
         saved_path.write_bytes(file_bytes)
 
-        doc = Document(
+        doc = RagUploadDocument(
             id=document_id,
             filename=safe_filename,
             file_path=str(saved_path),
@@ -302,7 +303,7 @@ async def crawl_website(body: CrawlRequest) -> CrawlResponse:
     async with async_session_factory() as session:
         for result in results:
             document_id = str(uuid.uuid4())
-            doc = Document(
+            doc = RagUploadDocument(
                 id=document_id,
                 filename=result.title or result.url,
                 file_path=result.html_path,
@@ -323,7 +324,7 @@ async def ingest_text_document(document_id: str, filename: str, text: str) -> Up
     표 마커(<!-- TABLE_BLOCK_START/END -->)가 포함된 텍스트를 그대로 넣으면 된다.
     """
     async with async_session_factory() as session:
-        doc = Document(
+        doc = RagUploadDocument(
             id=document_id,
             filename=filename,
             status=DocumentStatus.EXTRACTED,
@@ -353,7 +354,7 @@ async def dedupe_documents(request: Request, apply: bool = False) -> DedupeDocum
     apply=false(기본값)면 미리보기만 하고 실제로는 아무것도 지우지 않는다.
     """
     async with async_session_factory() as session:
-        result = await session.execute(select(Document))
+        result = await session.execute(select(RagUploadDocument))
         docs = list(result.scalars().all())
 
     candidates: dict[tuple[str, int], list[Document]] = defaultdict(list)
@@ -750,7 +751,7 @@ async def search_document_labels(q: str, request: Request) -> list[str]:
 async def list_documents_needing_review() -> list[dict]:
     """청킹 품질 경고(warning_message)가 있는 문서 목록을 조회한다 (사람이 골라서 재검토할 대상)."""
     async with async_session_factory() as session:
-        result = await session.execute(select(Document).where(Document.warning_message.is_not(None)))
+        result = await session.execute(select(RagUploadDocument).where(RagUploadDocument.warning_message.is_not(None)))
         docs = result.scalars().all()
         return [
             {
@@ -769,21 +770,16 @@ async def list_documents_needing_review() -> list[dict]:
 async def list_documents() -> list[dict]:
     """업로드된 문서 전체 목록을 조회한다 (콘솔 UI에서 문서 선택용, 새로고침해도 이력이 남도록).
 
-    주간보고서 항목을 검색에 연결하려고 항목 하나당 만든 내부용 Document(라벨
-    "주간보고서"로 표시됨, work_report_indexing.py 참고)는 여기서 제외한다 —
-    실제 업로드한 파일이 아니라 검색용 조각이라 그대로 노출하면 목록이 항목 개수만큼
-    불어난다. 대신 주간보고서로 업로드된 원본 PDF(work_report_documents)를 같은
-    모양으로 변환해서 끼워 넣는다 — 사용자 입장에선 "내가 업로드한 파일"이 하나로
-    보이는 게 자연스럽다.
+    주간보고서 항목(WeeklyReportEntry)은 이제 검색용으로 만든 documents 행 자체라서
+    여기서 제외한다 — 실제 업로드한 파일이 아니라 검색용 조각이라 그대로 노출하면 목록이
+    항목 개수만큼 불어난다. document_type_id로 걸러서 RagUploadDocument만 조회하므로
+    (이전처럼 라벨 기반 제외 서브쿼리가 필요 없음) 실수로 다른 유형이 섞일 수 없다.
+    대신 주간보고서로 업로드된 원본 PDF(WeeklyReportSource)를 같은 모양으로 변환해서
+    끼워 넣는다 — 사용자 입장에선 "내가 업로드한 파일"이 하나로 보이는 게 자연스럽다.
     """
     async with async_session_factory() as session:
-        work_report_marker_ids = (
-            select(DocumentLabel.document_id).where(DocumentLabel.label == "주간보고서")
-        ).scalar_subquery()
         result = await session.execute(
-            select(Document)
-            .where(Document.id.notin_(work_report_marker_ids))
-            .order_by(Document.created_at.desc())
+            select(RagUploadDocument).order_by(RagUploadDocument.created_at.desc())
         )
         docs = result.scalars().all()
 
@@ -793,7 +789,7 @@ async def list_documents() -> list[dict]:
             labels_by_doc.setdefault(document_id, []).append(label)
 
         work_report_docs_result = await session.execute(
-            select(WorkReportDocument).order_by(WorkReportDocument.uploaded_at.desc())
+            select(WeeklyReportSource).order_by(WeeklyReportSource.created_at.desc())
         )
         work_report_docs = work_report_docs_result.scalars().all()
 
@@ -872,18 +868,18 @@ async def _delete_documents(
 
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Document)
-            .where(Document.id.in_(unique_ids))
+            select(RagUploadDocument)
+            .where(RagUploadDocument.id.in_(unique_ids))
             .with_for_update()
         )
         documents = {document.id: document for document in result.scalars().all()}
         response.missing = [document_id for document_id in unique_ids if document_id not in documents]
 
-        # documents 테이블엔 없지만(주간보고서 업로드 원본은 별도 테이블이라 여기 안 잡힘)
-        # work_report_documents에 있는 id는 여기서 같이 처리하고 missing에서 뺀다.
+        # RagUploadDocument엔 없지만(주간보고서 업로드 원본은 document_type_id가 달라서 위 쿼리에
+        # 안 잡힘) WeeklyReportSource에 있는 id는 여기서 같이 처리하고 missing에서 뺀다.
         if response.missing:
             wrd_result = await session.execute(
-                select(WorkReportDocument).where(WorkReportDocument.id.in_(response.missing))
+                select(WeeklyReportSource).where(WeeklyReportSource.id.in_(response.missing))
             )
             work_report_docs = {w.id: w for w in wrd_result.scalars().all()}
             if work_report_docs:
@@ -892,14 +888,14 @@ async def _delete_documents(
                 ]
                 for wrd in work_report_docs.values():
                     entry_result = await session.execute(
-                        select(WorkReportEntry.id).where(WorkReportEntry.source_document_id == wrd.id)
+                        select(WeeklyReportEntry.id).where(WeeklyReportEntry.source_document_id == wrd.id)
                     )
                     entry_ids = [row[0] for row in entry_result.all()]
+                    # deindex_entry가 청크/라벨/entry 행 자체(=Document)를 전부 지운다 — 별도로
+                    # entry를 다시 bulk delete할 필요 없음(entry가 이제 documents 행 자신이라서).
                     for entry_id in entry_ids:
                         await deindex_entry(session, request.app.state.vector_store, entry_id)
-                    if entry_ids:
-                        await session.execute(delete(WorkReportEntry).where(WorkReportEntry.id.in_(entry_ids)))
-                    await session.execute(delete(WorkReportDocument).where(WorkReportDocument.id == wrd.id))
+                    await session.execute(delete(WeeklyReportSource).where(WeeklyReportSource.id == wrd.id))
                     await session.commit()
                     _unlink_managed_file(Path(wrd.file_path), _UPLOAD_DIR.resolve(), response.cleanup_warnings)
                     response.deleted.append(wrd.id)

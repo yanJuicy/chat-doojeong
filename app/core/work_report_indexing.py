@@ -1,18 +1,14 @@
 """
-주간보고서 항목(WorkReportEntry)을 일반 RAG 검색에서도 찾을 수 있게 잇는 얇은 다리.
+WeeklyReportEntry(=documents 테이블의 행) 검색 인덱싱.
 
-설계: 새 검색 경로를 만들지 않는다. 항목이 저장/수정/삭제될 때마다 그 항목 하나를
-대표하는 Document 1개 + DocumentChunk 1개를 만들어(또는 지워서) 기존 documents/
-document_chunks 테이블에 끼워 넣기만 한다. 그러면 이미 있는 embedding_worker가
-평소처럼 이 청크를 주워서 Qdrant에 넣고, 이미 있는 retrieval_pipeline이 평소처럼
-검색해준다 — 워커/검색 코드는 한 줄도 안 바꾼다.
+통합 전에는 work_report_entries가 별도 테이블이라, 검색에 잡히게 하려고 매번
+그림자 Document+DocumentChunk를 복제해서 만들었다. 지금은 WeeklyReportEntry 자체가
+documents 테이블의 행이라 복제가 필요 없다 — 이 행의 raw_text를 템플릿 요약으로
+채우고 DocumentChunk 하나를 만들어(갱신해서) 기존 embedding_worker에 태우기만 하면 된다.
 
-Document.id는 WorkReportEntry.id와 항상 같은 값을 쓴다(1:1). 그래서 별도 매핑
-테이블 없이 entry_id로 바로 대응하는 Document/DocumentChunk를 찾아 지울 수 있다.
-
-원본 상세 데이터(entry.content 등)는 여전히 work_report_entries에만 있고, Qdrant에는
-검색용 요약 텍스트만 들어간다 — 문서 전체를 통째로 저장하지 않는다는 원칙과 동일하게,
-여기서도 원본은 SQL 테이블에만 두고 검색 인덱스에는 요약만 둔다.
+인덱싱 타이밍은 저장과 같은 요청 안에서 즉시 처리한다(워커 폴링 주기까지 기다리지 않음) —
+docs/DB_확장_구조_설계초안.md 4번 항목 참고. 그래야 채팅으로 항목을 추가하자마자
+챗봇 질문에서 바로 찾아지는 지금 동작이 유지된다.
 
 LLM을 쓰지 않는다 — 템플릿 문자열 조합만 사용한다(정규식/예측 가능한 방식 선호 원칙과 동일).
 """
@@ -20,12 +16,12 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import delete as sa_delete
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .embeddings import BaseEmbeddingProvider
 from .vector_store import BaseVectorStore
-from ..db.models import Document, DocumentChunk, DocumentLabel, DocumentStatus, WorkReportEntry
+from ..db.models import DocumentChunk, DocumentLabel, DocumentStatus, WeeklyReportEntry
 from ..workers.embedding_worker import process_pending_chunks
 
 logger = logging.getLogger(__name__)
@@ -33,7 +29,7 @@ logger = logging.getLogger(__name__)
 _MARKER_LABEL = "주간보고서"
 
 
-def _build_summary_text(entry: WorkReportEntry) -> str:
+def _build_summary_text(entry: WeeklyReportEntry) -> str:
     """LLM 없이 조립하는 검색용 요약 문장."""
     entry_type_label = "실적" if entry.entry_type == "실적" else "계획"
     category = f" ({entry.source_category})" if entry.source_category else ""
@@ -44,32 +40,34 @@ def _build_summary_text(entry: WorkReportEntry) -> str:
     )
 
 
+async def _ensure_label(session: AsyncSession, document_id: str, label: str) -> None:
+    existing = await session.execute(
+        select(DocumentLabel.id).where(DocumentLabel.document_id == document_id, DocumentLabel.label == label)
+    )
+    if existing.scalar_one_or_none() is None:
+        session.add(DocumentLabel(document_id=document_id, label=label))
+
+
 async def index_entry(
     session: AsyncSession,
     embedding_provider: BaseEmbeddingProvider,
     vector_store: BaseVectorStore,
-    entry: WorkReportEntry,
+    entry: WeeklyReportEntry,
 ) -> None:
-    """entry 하나를 대표하는 Document+DocumentChunk를 만들고 즉시 임베딩까지 마친다."""
-    document = await session.get(Document, entry.id)
-    if document is None:
-        document = Document(
-            id=entry.id,
-            filename=f"주간보고_{entry.department}_{entry.period_start.isoformat()}",
-            status=DocumentStatus.CHUNKED,
-        )
-        session.add(document)
-        session.add(DocumentLabel(document_id=entry.id, label=_MARKER_LABEL))
-        session.add(DocumentLabel(document_id=entry.id, label=entry.department))
-    else:
-        document.status = DocumentStatus.CHUNKED
+    """entry(=documents 행 자신)의 raw_text/청크를 최신 상태로 맞추고 즉시 임베딩까지 마친다."""
+    entry.raw_text = _build_summary_text(entry)
+    entry.status = DocumentStatus.CHUNKED
+    entry.filename = f"주간보고_{entry.department}_{entry.period_start.isoformat()}"
+
+    await _ensure_label(session, entry.id, _MARKER_LABEL)
+    await _ensure_label(session, entry.id, entry.department)
 
     await session.execute(sa_delete(DocumentChunk).where(DocumentChunk.document_id == entry.id))
     session.add(
         DocumentChunk(
             id=entry.id,
             document_id=entry.id,
-            text=_build_summary_text(entry),
+            text=entry.raw_text,
             embedded=False,
         )
     )
@@ -81,11 +79,11 @@ async def index_entry(
 
 
 async def deindex_entry(session: AsyncSession, vector_store: BaseVectorStore, entry_id: str) -> None:
-    """entry_id에 대응하는 Document/DocumentChunk와 Qdrant 벡터를 지운다."""
+    """entry_id에 대응하는 청크/라벨/Document 행과 Qdrant 벡터를 지운다."""
     await session.execute(sa_delete(DocumentChunk).where(DocumentChunk.document_id == entry_id))
     await session.execute(sa_delete(DocumentLabel).where(DocumentLabel.document_id == entry_id))
-    document = await session.get(Document, entry_id)
-    if document is not None:
-        await session.delete(document)
+    entry = await session.get(WeeklyReportEntry, entry_id)
+    if entry is not None:
+        await session.delete(entry)
     await session.commit()
     await vector_store.delete_by_document_id(entry_id)

@@ -15,12 +15,32 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+# document_types.id 시드 값. 마이그레이션(0012_unify_documents.py)의 시드와 반드시 일치해야 한다.
+# 새 문서 유형이 필요하면: (1) document_types에 행 추가 + (2) 여기 상수 + (3) Document 서브클래스
+# 하나만 추가하면 된다 — 새 SQL 테이블은 필요 없다 (docs/DB_확장_구조_설계초안.md 참고).
+RAG_UPLOAD_TYPE_ID = 1
+WEEKLY_REPORT_ENTRY_TYPE_ID = 2
+WEEKLY_REPORT_SOURCE_TYPE_ID = 3
+
+
+class DocumentType(Base):
+    """문서 유형 lookup 테이블. 새 유형 추가 = 이 테이블에 행 INSERT (스키마 변경 없음)."""
+
+    __tablename__ = "document_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class DocumentStatus(str, enum.Enum):
@@ -37,9 +57,22 @@ class DocumentStatus(str, enum.Enum):
 
 
 class Document(Base):
+    """
+    모든 문서 유형(RAG 업로드, 주간보고서 항목, 주간보고서 원본 PDF, ...)을 담는 통합 테이블.
+    document_type_id로 유형을 구분하고(document_types 참고), 유형별 서브클래스
+    (RagUploadDocument/WeeklyReportEntry/WeeklyReportSource, 아래)를 통해 조회한다.
+
+    **주의**: 이 기본 클래스로 직접 `select(Document)`를 하면 모든 유형이 섞여서 나온다.
+    RAG 업로드 문서만 다루는 코드(문서관리 목록, 중복 정리, 재추출 등)는 반드시
+    `select(RagUploadDocument)`처럼 서브클래스로 조회해서 다른 유형이 섞이는 걸 막는다 —
+    SQLAlchemy가 polymorphic_identity로 자동 필터링해준다(수동 WHERE 필요 없음).
+    """
+
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_type_id: Mapped[int | None] = mapped_column(ForeignKey("document_types.id"), nullable=True, index=True)
+
     filename: Mapped[str] = mapped_column(String, nullable=False)
     file_path: Mapped[str | None] = mapped_column(String, nullable=True)  # 원본 파일 저장 위치 (extraction_worker가 읽는 경로)
     file_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # sha256, 동일 파일 재업로드 감지용
@@ -48,7 +81,7 @@ class Document(Base):
         default=DocumentStatus.UPLOADED,
         nullable=False,
     )
-    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # extraction_worker가 채워넣는 결과 (표 마커 포함)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # 검색용 본문 — RAG 업로드=OCR 추출문, 생성형=템플릿 요약
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)  # status=FAILED일 때 원인
     warning_message: Mapped[str | None] = mapped_column(Text, nullable=True)  # 실패는 아니지만 청킹 품질 등에서 감지된 이상 징후
     retry_count: Mapped[int] = mapped_column(default=0)  # 실패 후 자동/수동 재시도된 횟수 (max_retries 넘으면 FAILED로 확정)
@@ -60,11 +93,215 @@ class Document(Base):
     content_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # raw_text의 SHA256, 자동 중복 감지용
     pipeline_version: Mapped[str | None] = mapped_column(String, nullable=True)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- weekly_report_entry에서 검증된 컬럼. 다른 유형은 같은 개념이 있을 때만 재사용, 없으면 NULL
+    #     (docs/DB_확장_구조_설계초안.md 2-3 참고 — "모든 유형 공통"이 아니라 선택적 컬럼) ---
+    subject: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # 부서명/거래처명 등
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)  # 검색/미리보기용 요약 문장
+
+    # --- 생성형 문서(chat/document 입력) 전용 ---
+    source: Mapped[str | None] = mapped_column(String, nullable=True)  # "chat" | "document"
+    source_document_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    raw_input: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- 그 유형에만 있는 구조 필드 (예: entry_type, items, total_amount 등) ---
+    type_specific_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document")
     labels: Mapped[list["DocumentLabel"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+
+    __mapper_args__ = {"polymorphic_on": document_type_id}
+
+
+class RagUploadDocument(Document):
+    """사용자가 업로드해서 OCR/청킹/임베딩 파이프라인을 타는 일반 RAG 문서. 지금까지의 Document와 동일."""
+
+    __mapper_args__ = {"polymorphic_identity": RAG_UPLOAD_TYPE_ID}
+
+
+class WeeklyReportEntry(Document):
+    """
+    주간(추후 월간도 가능) 업무보고 원자료 항목 하나. 채팅으로 직접 입력하거나 기존
+    보고서 문서(표)를 업로드해서 추출한 뒤, 정제(문체 정규화)를 거쳐 여기 저장된다.
+    이전의 별도 work_report_entries 테이블을 대체 — 이 행 자체가 검색 가능한 Document라서
+    별도 "그림자 문서" 복제가 필요 없다.
+
+    "구분"(사업/관리/시군특화... 등 원본 문서마다 다를 수 있는 값)은 고정 enum으로
+    만들지 않는다. 최종 보고서를 뽑을 타겟 양식의 구분 체계가 원본과 다를 수 있어서
+    (예: 원본은 구분 3개, 타겟 양식은 구분 1개), 저장 시점엔 type_specific_data.source_category에
+    원본 표기를 느슨한 태그로만 보존하고, 실제로 어느 칸에 넣을지는 보고서 생성 시점에
+    타겟 양식을 보고 결정한다.
+
+    subject=부서명, period_start/end=보고 기간, content=정제된 최종 문장(공통 컬럼 사용).
+    entry_type/source_category/source_format은 이 유형에만 있는 필드라 type_specific_data에.
+    """
+
+    __mapper_args__ = {"polymorphic_identity": WEEKLY_REPORT_ENTRY_TYPE_ID}
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        department: str,
+        entry_type: str,
+        period_start: date,
+        period_end: date,
+        content: str,
+        source: str,
+        source_category: str | None = None,
+        source_document_id: str | None = None,
+        raw_input: str | None = None,
+        source_format: str | None = None,
+    ) -> None:
+        # 옛 WorkReportEntry(department=.., entry_type=.., ...) 생성자와 동일한 키워드를 받는다 —
+        # 호출부(work_reports.py)는 안 바뀌고, 내부적으로만 subject/type_specific_data로 매핑한다.
+        super().__init__(
+            id=id,
+            filename=f"주간보고_{department}_{period_start.isoformat()}",
+            subject=department,
+            period_start=period_start,
+            period_end=period_end,
+            content=content,
+            source=source,
+            source_document_id=source_document_id,
+            raw_input=raw_input,
+            type_specific_data={
+                "entry_type": entry_type,
+                "source_category": source_category,
+                "source_format": source_format,
+            },
+        )
+
+    # hybrid_property: 인스턴스에서 entry.department처럼 읽고 쓸 수 있으면서, 동시에
+    # select(WeeklyReportEntry.department)/.where(...)/.order_by(...)처럼 클래스 레벨 쿼리
+    # 표현식으로도 그대로 쓸 수 있다 (plain @property는 인스턴스에서만 동작해서 쿼리에 못 씀).
+    @hybrid_property
+    def department(self) -> str | None:
+        return self.subject
+
+    @department.setter
+    def department(self, value: str) -> None:
+        self.subject = value
+
+    @department.expression
+    def department(cls):  # noqa: N805 — SQLAlchemy hybrid_property 관례
+        return cls.subject
+
+    @hybrid_property
+    def entry_type(self) -> str | None:
+        return (self.type_specific_data or {}).get("entry_type")
+
+    @entry_type.setter
+    def entry_type(self, value: str) -> None:
+        self.type_specific_data = {**(self.type_specific_data or {}), "entry_type": value}
+
+    @entry_type.expression
+    def entry_type(cls):  # noqa: N805
+        return cls.type_specific_data["entry_type"].astext
+
+    @property
+    def source_category(self) -> str | None:
+        return (self.type_specific_data or {}).get("source_category")
+
+    @source_category.setter
+    def source_category(self, value: str | None) -> None:
+        self.type_specific_data = {**(self.type_specific_data or {}), "source_category": value}
+
+    # source=document일 때만 채워짐. 원본 표 셀에서 이 항목이 어떤 표현 형식으로 쓰여
+    # 있었는지(report_table_parser가 정규식으로 감지) — "bullet:•", "bullet:-"처럼 글머리
+    # 기호를 썼으면 그 기호를, 기호 없이 문장 하나로 쓰여 있었으면 "prose"를 저장한다.
+    # 최종 보고서 DOCX를 만들 때 이 부서의 원본 문서가 쓰던 표현 형식을 그대로 재현하는 데 쓴다
+    # (weekly_report_composer.detect_department_format 참고). weekly_report_composer가
+    # select(...source_format)으로 조회하므로 이것도 hybrid_property로 둔다.
+    @hybrid_property
+    def source_format(self) -> str | None:
+        return (self.type_specific_data or {}).get("source_format")
+
+    @source_format.setter
+    def source_format(self, value: str | None) -> None:
+        self.type_specific_data = {**(self.type_specific_data or {}), "source_format": value}
+
+    @source_format.expression
+    def source_format(cls):  # noqa: N805
+        return cls.type_specific_data["source_format"].astext
+
+
+class WeeklyReportSource(Document):
+    """
+    주간보고서 작성용으로 업로드된 원본 PDF 파일 1건. WeeklyReportEntry.source_document_id가
+    가리키는 대상. 검색 대상이 아니라 표 데이터 추출용 원본 보관이 목적이라
+    OCR/청킹/임베딩 파이프라인을 타지 않는다(raw_text 비워둠).
+    subject=부서명(공통 컬럼 재사용). pages_with_table 등 이 유형에만 있는 통계는
+    type_specific_data에.
+    """
+
+    __mapper_args__ = {"polymorphic_identity": WEEKLY_REPORT_SOURCE_TYPE_ID}
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        filename: str,
+        file_path: str,
+        department: str | None = None,
+        pages_with_table: int = 0,
+        pages_without_table: int = 0,
+        entries_created: int = 0,
+    ) -> None:
+        # 옛 WorkReportDocument(...) 생성자와 동일한 키워드를 받는다 (호출부 변경 최소화).
+        super().__init__(
+            id=id,
+            filename=filename,
+            file_path=file_path,
+            subject=department,
+            status=DocumentStatus.READY,  # 검색 파이프라인을 안 타므로 처리 대기 상태로 두지 않는다
+            type_specific_data={
+                "pages_with_table": pages_with_table,
+                "pages_without_table": pages_without_table,
+                "entries_created": entries_created,
+            },
+        )
+
+    @property
+    def department(self) -> str | None:
+        return self.subject
+
+    @department.setter
+    def department(self, value: str | None) -> None:
+        self.subject = value
+
+    @property
+    def pages_with_table(self) -> int:
+        return (self.type_specific_data or {}).get("pages_with_table", 0)
+
+    @pages_with_table.setter
+    def pages_with_table(self, value: int) -> None:
+        self.type_specific_data = {**(self.type_specific_data or {}), "pages_with_table": value}
+
+    @property
+    def pages_without_table(self) -> int:
+        return (self.type_specific_data or {}).get("pages_without_table", 0)
+
+    @pages_without_table.setter
+    def pages_without_table(self, value: int) -> None:
+        self.type_specific_data = {**(self.type_specific_data or {}), "pages_without_table": value}
+
+    @property
+    def entries_created(self) -> int:
+        return (self.type_specific_data or {}).get("entries_created", 0)
+
+    @entries_created.setter
+    def entries_created(self, value: int) -> None:
+        self.type_specific_data = {**(self.type_specific_data or {}), "entries_created": value}
+
+    @property
+    def uploaded_at(self) -> datetime:
+        return self.created_at
 
 
 class DocumentLabel(Base):
@@ -163,74 +400,5 @@ class ChatTurn(Base):
     session: Mapped["ChatSession"] = relationship(back_populates="turns")
 
 
-class WorkReportEntry(Base):
-    """
-    주간(추후 월간도 가능) 업무보고 원자료 항목 하나. 채팅으로 직접 입력하거나 기존
-    보고서 문서(표)를 업로드해서 추출한 뒤, 정제(문체 정규화)를 거쳐 여기 저장된다.
-
-    "구분"(사업/관리/시군특화... 등 원본 문서마다 다를 수 있는 값)은 고정 enum으로
-    만들지 않는다. 최종 보고서를 뽑을 타겟 양식의 구분 체계가 원본과 다를 수 있어서
-    (예: 원본은 구분 3개, 타겟 양식은 구분 1개), 저장 시점엔 source_category에 원본
-    표기를 느슨한 태그로만 보존하고, 실제로 어느 칸에 넣을지는 보고서 생성 시점에
-    타겟 양식을 보고 결정한다 (다대일 병합은 정보 손실 없이 가능, 반대로 저장 시점에
-    미리 못 박아두면 나중에 다른 구분 체계의 양식이 필요할 때 재분류가 필요해짐).
-    """
-
-    __tablename__ = "work_report_entries"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-
-    department: Mapped[str] = mapped_column(String)
-
-    # "실적" 또는 "계획"
-    entry_type: Mapped[str] = mapped_column(String)
-
-    period_start: Mapped[date] = mapped_column(Date)
-    period_end: Mapped[date] = mapped_column(Date)
-
-    # 원본 문서/채팅에서 온 구분 표기 (예: "사업", "관리", "시군특화일자리사업단"). 느슨한
-    # 태그일 뿐 스키마로 강제하지 않는다 — 위 클래스 docstring 참고.
-    source_category: Mapped[str | None] = mapped_column(String, nullable=True)
-
-    # 정제 파이프라인을 거쳐 격식체 짧은 문장("~완료/~실시" 등)으로 다듬어진 최종 문장.
-    content: Mapped[str] = mapped_column(Text)
-
-    # "chat" 또는 "document"
-    source: Mapped[str] = mapped_column(String)
-
-    # source=document일 때만 채워짐. 문서가 삭제돼도 과거에 뽑아둔 보고 항목은 남아있어야
-    # 하므로(이미 확정 제출된 보고서의 근거 자료), FK 제약을 걸지 않고 참조 정보로만 둔다.
-    source_document_id: Mapped[str | None] = mapped_column(String, nullable=True)
-
-    # source=chat일 때 사용자가 실제로 입력한 원문. 정제 결과(content)가 의심스러울 때
-    # 원문과 대조해서 검증/수정할 수 있게 남겨둔다.
-    raw_input: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # source=document일 때만 채워짐. 원본 표 셀에서 이 항목이 어떤 표현 형식으로 쓰여
-    # 있었는지(report_table_parser가 정규식으로 감지) — "bullet:•", "bullet:-"처럼 글머리
-    # 기호를 썼으면 그 기호를, 기호 없이 문장 하나로 쓰여 있었으면 "prose"를 저장한다.
-    # 최종 보고서 DOCX를 만들 때 이 부서의 원본 문서가 쓰던 표현 형식을 그대로 재현하는 데 쓴다
-    # (weekly_report_composer.detect_department_format 참고).
-    source_format: Mapped[str | None] = mapped_column(String, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class WorkReportDocument(Base):
-    """
-    주간보고서 작성용으로 업로드된 원본 PDF 파일 1개. work_report_entries.source_document_id가
-    가리키는 대상 — 파일은 처음부터 디스크에 저장돼 있었지만(work_reports.py의 upload_document),
-    그 경로를 조회/재다운로드할 DB 행이 없어서 추가했다. 일반 문서(documents 테이블)와는
-    별개로 둔다 — 목적이 검색이 아니라 표 데이터 추출이라 OCR/청킹/임베딩 파이프라인을 타지 않는다.
-    """
-
-    __tablename__ = "work_report_documents"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    filename: Mapped[str] = mapped_column(String, nullable=False)
-    file_path: Mapped[str] = mapped_column(String, nullable=False)
-    department: Mapped[str | None] = mapped_column(String, nullable=True)
-    pages_with_table: Mapped[int] = mapped_column(default=0)
-    pages_without_table: Mapped[int] = mapped_column(default=0)
-    entries_created: Mapped[int] = mapped_column(default=0)
-    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+# WorkReportEntry/WorkReportDocument는 위 WeeklyReportEntry/WeeklyReportSource로 통합됐다
+# (docs/DB_확장_구조_설계초안.md, migrations/versions/0012_unify_documents.py 참고).

@@ -31,6 +31,7 @@ from ...core.pdf_page_classifier import choose_mixed_page_text, classify_pdf_pag
 from ...core.table_markdown import rows_to_markdown_table, wrap_table_block
 from ...core.table_region_detector import page_likely_has_table
 from ..table_extraction.engines.paddle_engine import PaddleTableEngine
+from ..table_extraction.page_rendering import render_page_to_image
 
 logger = logging.getLogger(__name__)
 
@@ -292,17 +293,11 @@ class PdfExtractor(BaseDocumentExtractor):
         return await self._image_captioner.caption(image, context=context[:_CAPTION_CONTEXT_MAX_CHARS])
 
     def _render_page_to_image(self, page) -> Image.Image:  # noqa: ANN001 (fitz.Page 타입은 외부 라이브러리)
-        """
-        스캔본 페이지를 이미지로 렌더링한다.
-        DPI가 높을수록 정확도는 조금 오르지만 처리 시간이 픽셀 수(=DPI 제곱)에 비례해서 늘어난다.
-        300->200 DPI로 낮추면 픽셀 수가 약 44%로 줄어 OCR 시간이 크게 준다 (표 구조 인식 자체가
-        무거운 게 진짜 병목이라, 해상도를 과하게 높여도 그 부분은 별로 안 빨라짐).
+        """스캔본 페이지를 이미지로 렌더링한다 (공용 유틸리티, page_rendering.render_page_to_image 참고).
+
         작은 글씨가 많은 인증서/도면류는 settings.scan_render_dpi를 문서 종류별로 더 높여 쓸 수 있다.
         """
-        zoom = settings.scan_render_dpi / 72  # PyMuPDF 기본 72 DPI 기준 배율 계산
-        matrix = __import__("fitz").Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=matrix)
-        return Image.open(io.BytesIO(pix.tobytes("png")))
+        return render_page_to_image(page, settings.scan_render_dpi)
 
     def _ocr_page(self, image: Image.Image) -> str:
         """

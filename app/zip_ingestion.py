@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from .api_models import ZipUploadItem
 from .config import settings
-from .db.models import Document, DocumentStatus
+from .db.models import DocumentStatus, RagUploadDocument
 from .db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ async def process_zip_bytes(
             document_id = str(uuid.uuid4())
             file_hash = hashlib.sha256(file_bytes).hexdigest()
             async with async_session_factory() as session:
-                existing = await session.execute(select(Document).where(Document.file_hash == file_hash))
+                existing = await session.execute(select(RagUploadDocument).where(RagUploadDocument.file_hash == file_hash))
                 existing_document = existing.scalars().first()
                 if existing_document is not None:
                     created.append(
@@ -108,7 +108,7 @@ async def process_zip_bytes(
                 saved_path = upload_dir / f"{document_id}_{display_name}"
                 saved_path.write_bytes(file_bytes)
                 session.add(
-                    Document(
+                    RagUploadDocument(
                         id=document_id,
                         filename=display_name,
                         file_path=str(saved_path),
