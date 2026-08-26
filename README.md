@@ -1,7 +1,25 @@
 # 온프레미스 RAG 챗봇
 
 FastAPI 앱과 PostgreSQL 중심 워커 파이프라인으로 문서를 추출·청킹·임베딩하고,
-Qdrant 하이브리드 검색과 Ollama LLM으로 근거 기반 답변을 생성한다.
+Qdrant 하이브리드 검색과 Ollama LLM으로 근거 기반 답변을 생성한다. 인터넷 연결 없는
+폐쇄망(air-gapped) 환경에서 동작하는 것을 전제로 설계했다.
+
+## 이 프로젝트의 차별화 포인트
+
+- **문서 유형이 늘어나도 테이블을 새로 만들지 않는다.** `documents` 테이블 하나에
+  `document_type_id` + 유연한 `type_specific_data`(JSONB) 구조로 RAG 업로드 문서, 주간보고서
+  항목, 자재입출고 원본을 전부 담는다. 회사마다 서식이 다른 문서(주간보고서/견적서/거래명세서 등)를
+  새 테이블 없이 그대로 수용할 수 있다는 뜻이다. 자세한 내용은 [Wiki: 아키텍처](../../wiki/Architecture)
+  참고.
+- **정확도를 위해 하이브리드 검색 + 2단계 리랭킹을 쓴다.** dense+sparse 벡터를 동시에 뽑는
+  BGE-M3로 1차 후보 64개를 넓게 찾고, cross-encoder 리랭커(BGE-reranker-v2-m3)로 최종 5개만
+  정밀하게 골라 LLM에 넘긴다. 왜 이 모델들을 골랐는지는 [Wiki: 모델 선정 근거](../../wiki/Model-Selection)
+  참고.
+- **폐쇄망 요건을 처음부터 전제로 설계했다.** LLM(Ollama+Qwen3), 임베딩(BGE-M3), 리랭커
+  (BGE-reranker-v2-m3), OCR(PaddleOCR)까지 전부 오픈소스 로컬 모델만 쓴다 — 외부 API 호출이
+  전혀 없다.
+- **RAG 검색 외에 실제 업무 자동화 기능 3종을 붙였다.** 주간보고서 자동 생성(+부서별 문체
+  자동 맞춤), 자재입출고 자동 반영, 출하보고서 생성 — 아래 "부가 기능" 참고.
 
 ## 구성
 
@@ -72,6 +90,7 @@ python scripts/audit_pdf_pages.py --summary-only "C:\path\to\pdf-folder"
 
 ## 핵심 API
 
+**문서 검색(RAG)**
 - `POST /api/documents/upload`: 파일과 다중 라벨 등록
 - `POST /api/admin/run-workers`: 기본 16문서 단위로 추출→청킹→임베딩을 순환하는 백그라운드 파이프라인 실행
 - `GET /api/documents/{id}/status`: 처리 상태와 추출 품질 확인
@@ -83,6 +102,29 @@ python scripts/audit_pdf_pages.py --summary-only "C:\path\to\pdf-folder"
 - `POST /api/chat`: 일반 답변
 - `GET /api/chat/stream`: SSE 토큰 스트리밍
 - `POST /api/evaluation/run`: 콘솔 UI 없이 실행하는 회귀 평가 (`docs/EVALUATION.md` 참고)
+
+**주간보고서 자동 생성** (`app/backend/work_reports.py`)
+- `POST /api/v1/work-reports/upload-document`: 기존 보고서 PDF를 업로드하면 표를 자동으로 인식해 항목으로 저장
+- `POST /api/v1/work-reports/chat-entry`: 자유롭게 입력한 텍스트를 실적/계획으로 분리하고, 해당 부서의
+  기존 문체(어미)에 자동으로 맞춰 저장
+- `GET /api/v1/work-reports/report` / `GET /api/v1/work-reports/report.docx`: 기간·부서 기준으로
+  모아서 미리보기(JSON) 또는 완성 문서(DOCX)로 발급
+- `PATCH` / `DELETE /api/v1/work-reports/{entry_id}`: 저장된 항목 수정/삭제
+
+**자재입출고 자동 반영** (`app/reports/material_receipt/router.py`)
+- `POST /api/material-receipt/preview`: 거래처 주문서 + 사내 `자재입출고.xlsx`를 올리면 저장 없이
+  매칭/미매칭 목록만 미리 보여줌
+- `POST /api/material-receipt/apply`: 실제로 반영한 수정된 xlsx 파일을 다운로드로 돌려줌
+
+**출하보고서 생성** (`app/report_api/shipment_router.py`)
+- `POST /api/reports/shipment/generate`: 계획·실적 데이터를 넣으면 항목별 상태(정상/부분출하/미출하/초과)를 계산
+- `POST /api/reports/shipment/documents`: 같은 데이터로 완성된 DOCX 문서를 발급
+
+## 더 알아보기
+
+이 README는 실행 방법 위주다. RAG 개념 설명, 모델 선정 근거, 실제로 겪은 버그와 교훈, 발표/Q&A
+대비 자료처럼 팀원이 프로젝트를 이해하고 공부하는 데 필요한 자세한 내용은 저장소의
+**[Wiki](../../wiki)** 에 정리되어 있다.
 
 ## 이번 개선 사항
 
